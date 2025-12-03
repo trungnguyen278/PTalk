@@ -5,6 +5,8 @@
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_vendor.h"
 #include "esp_lcd_panel_ops.h"
+
+
 #include "DisplayTypes.hpp"
 
 class Display {
@@ -27,6 +29,7 @@ public:
     void fill(uint16_t color = 0x0000);
     void drawText(const std::string& text, int x, int y, int size = 2, uint16_t color = 0xFFFF);
     void drawBitmapRGB565(int x, int y, int w, int h, const uint16_t* data);
+   
 
 private:
     DisplayConfig cfg;

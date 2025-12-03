@@ -6,6 +6,10 @@
 #include "esp_check.h"
 #include "driver/gpio.h"
 #include "driver/ledc.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
+
 
 static const char* TAG = "Display";
 
@@ -70,7 +74,7 @@ void Display::initPanel() {
 
     esp_lcd_panel_dev_config_t panel_config = {};
     panel_config.reset_gpio_num = cfg.pin_rst;
-    panel_config.rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB;
+    panel_config.color_space = ESP_LCD_COLOR_SPACE_RGB; //panel_config.rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB;
     panel_config.bits_per_pixel = 16;
 
     ESP_ERROR_CHECK(esp_lcd_new_panel_st7789(io_handle, &panel_config, &panel_handle));
@@ -248,6 +252,7 @@ void Display::drawText(const std::string& text, int x, int y, int size, uint16_t
         cursor_x += char_w_scaled + CHAR_SPACING;
     }
 }
+
 
 // (Giữ nguyên phần Init Backlight và setBrightness như cũ)
 void Display::initBacklight() {
