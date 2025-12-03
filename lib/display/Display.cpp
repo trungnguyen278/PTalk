@@ -254,6 +254,17 @@ void Display::drawText(const std::string& text, int x, int y, int size, uint16_t
 }
 
 
+void Display::drawScanline(int y, const uint16_t* data, int width) {
+    if (y < 0 || y >= _height) return;
+
+    // x1=0, y1=y; x2=width, y2=y+1
+    esp_lcd_panel_draw_bitmap(panel_handle,
+                              0, y,
+                              width, y + 1,
+                              data);
+}
+
+
 // (Giữ nguyên phần Init Backlight và setBrightness như cũ)
 void Display::initBacklight() {
     if (cfg.pin_bl < 0) return;

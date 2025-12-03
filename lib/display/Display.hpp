@@ -8,6 +8,21 @@
 
 
 #include "DisplayTypes.hpp"
+/*
+===============================================================================
+ Display Class
+===============================================================================
+    Nhiệm vụ của Display:
+    1. Khởi tạo và cấu hình màn hình LCD qua SPI
+    2. Cung cấp các hàm vẽ cơ bản: clear, fill, drawText, drawBitmapRGB565, drawScanline
+    3. Quản lý độ sáng qua PWM
+    4. Hỗ trợ xoay màn hình (0-3) và điều chỉnh kích thước logic tương ứng
+    5. Đóng gói các handle ESP-IDF liên quan đến LCD và SPI
+    6. Dễ dàng tích hợp với các module khác như DisplayAnimator
+    7. Tối ưu hóa hiệu năng vẽ qua SPI
+===============================================================================
+*/
+
 
 class Display {
 public:
@@ -29,6 +44,7 @@ public:
     void fill(uint16_t color = 0x0000);
     void drawText(const std::string& text, int x, int y, int size = 2, uint16_t color = 0xFFFF);
     void drawBitmapRGB565(int x, int y, int w, int h, const uint16_t* data);
+    void drawScanline(int y, const uint16_t* data, int width);
    
 
 private:
