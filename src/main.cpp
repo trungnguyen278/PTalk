@@ -127,7 +127,7 @@ extern "C" void app_main(void)
     // }
 
 
-    const TickType_t delayMs = pdMS_TO_TICKS(5000);  // 5s
+    const TickType_t delayMs = pdMS_TO_TICKS(50000);  // 5s
     char buf[32];
 
     while (true)
