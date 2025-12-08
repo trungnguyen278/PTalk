@@ -32,6 +32,13 @@ void StateManager::setSystemState(state::SystemState s) {
     ESP_LOGI(TAG, "SystemState -> %d", static_cast<int>(s));
     notifySystem(s);
 }
+void StateManager::setPowerState(state::PowerState s) {
+    std::lock_guard<std::mutex> lk(mtx);
+    if (s == power_state) return;
+    power_state = s;
+    ESP_LOGI(TAG, "PowerState -> %d", static_cast<int>(s));
+    // No notify for power state for now
+}
 
 state::InteractionState StateManager::getInteractionState() {
     std::lock_guard<std::mutex> lk(mtx);
@@ -44,6 +51,10 @@ state::ConnectivityState StateManager::getConnectivityState() {
 state::SystemState StateManager::getSystemState() {
     std::lock_guard<std::mutex> lk(mtx);
     return system_state;
+}
+state::PowerState StateManager::getPowerState() {
+    std::lock_guard<std::mutex> lk(mtx);
+    return power_state;
 }
 
 int StateManager::subscribeInteraction(InteractionCb cb) {
@@ -64,6 +75,12 @@ int StateManager::subscribeSystem(SystemCb cb) {
     system_cbs.emplace_back(id, std::move(cb));
     return id;
 }
+int StateManager::subscribePower(PowerCb cb) {
+    std::lock_guard<std::mutex> lk(mtx);
+    int id = next_sub_id++;
+    power_cbs.emplace_back(id, std::move(cb));
+    return id;
+}
 
 void StateManager::unsubscribeInteraction(int id) {
     std::lock_guard<std::mutex> lk(mtx);
@@ -79,6 +96,11 @@ void StateManager::unsubscribeSystem(int id) {
     std::lock_guard<std::mutex> lk(mtx);
     system_cbs.erase(std::remove_if(system_cbs.begin(), system_cbs.end(),
         [id](auto &p){ return p.first == id; }), system_cbs.end());
+}
+void StateManager::unsubscribePower(int id) {
+    std::lock_guard<std::mutex> lk(mtx);
+    power_cbs.erase(std::remove_if(power_cbs.begin(), power_cbs.end(),
+        [id](auto &p){ return p.first == id; }), power_cbs.end());
 }
 
 void StateManager::notifyInteraction(state::InteractionState s) {
@@ -96,6 +118,12 @@ void StateManager::notifyConnectivity(state::ConnectivityState s) {
 }
 void StateManager::notifySystem(state::SystemState s) {
     auto tmp = system_cbs;
+    for (auto &p : tmp) {
+        if (p.second) p.second(s);
+    }
+}
+void StateManager::notifyPower(state::PowerState s) {
+    auto tmp = power_cbs;
     for (auto &p : tmp) {
         if (p.second) p.second(s);
     }
