@@ -1,4 +1,4 @@
-#include "WifiManager.hpp"
+#include "WifiService.hpp"
 #include "nvs_flash.h"
 #include "esp_netif.h"
 #include "esp_log.h"
@@ -10,7 +10,7 @@
 #include <string>
 #include <algorithm>
 
-static const char* TAG = "WifiManager";
+static const char* TAG = "WifiService";
 
 #define NVS_NAMESPACE "wifi"
 #define NVS_KEY_SSID  "ssid"
@@ -49,7 +49,7 @@ std::string urlDecode(const std::string& src) {
 
 static esp_err_t portal_get_handler(httpd_req_t *req) {
     // 1. Quét WiFi & Tạo danh sách HTML
-    auto networks = WifiManager::instance().getAvailableNetworks();
+    auto networks = WifiService::instance().getAvailableNetworks();
     std::string listHtml = "";
     
     for (auto& net : networks) {
@@ -98,13 +98,13 @@ static esp_err_t portal_post_handler(httpd_req_t *req) {
     ssid = urlDecode(ssid);
     pass = urlDecode(pass);
 
-    WifiManager::instance().connectWithCredentials(ssid.c_str(), pass.c_str());
+    WifiService::instance().connectWithCredentials(ssid.c_str(), pass.c_str());
 
     httpd_resp_sendstr(req, "Saved! ESP32 will connect...");
     return ESP_OK;
 }
 
-void WifiManager::init() {
+void WifiService::init() {
     // Khởi tạo NVS
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -135,7 +135,7 @@ void WifiManager::init() {
 
 }
 
-bool WifiManager::autoConnect() {
+bool WifiService::autoConnect() {
     if (!auto_connect_enabled) {
         ESP_LOGI(TAG, "AutoConnect disabled by user");
         return false;
@@ -151,7 +151,7 @@ bool WifiManager::autoConnect() {
     return true;
 }
 
-void WifiManager::startSTA() {
+void WifiService::startSTA() {
     ESP_LOGI(TAG, "Starting STA mode with SSID:%s", sta_ssid.c_str());
 
     wifi_config_t wifi_config = {};
@@ -168,7 +168,7 @@ void WifiManager::startSTA() {
 
 
 
-void WifiManager::startCaptivePortal() {
+void WifiService::startCaptivePortal() {
     if (portal_running) return;
     ESP_LOGI(TAG, "Starting Captive Portal");
 
@@ -206,7 +206,7 @@ void WifiManager::startCaptivePortal() {
 }
 
 
-void WifiManager::stopCaptivePortal() {
+void WifiService::stopCaptivePortal() {
     if (!portal_running) return;
     ESP_LOGI(TAG, "Stopping Captive Portal");
     if (server) {
@@ -218,22 +218,22 @@ void WifiManager::stopCaptivePortal() {
 }
 
 
-void WifiManager::disconnect() {
+void WifiService::disconnect() {
     ESP_LOGI(TAG, "Disconnecting STA");
     ESP_ERROR_CHECK(esp_wifi_disconnect());
     wifi_connected = false;
     if (status_callback) status_callback(0); // DISCONNECTED
 }
 
-void WifiManager::disableAutoConnect() {
+void WifiService::disableAutoConnect() {
     auto_connect_enabled = false;
 }
 
-bool WifiManager::isConnected() const {
+bool WifiService::isConnected() const {
     return wifi_connected;
 }
 
-std::string WifiManager::getIp() const {
+std::string WifiService::getIp() const {
     if (!wifi_connected) return "";
     esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
     esp_netif_ip_info_t ip_info;
@@ -245,11 +245,11 @@ std::string WifiManager::getIp() const {
     return "";
 }
 
-void WifiManager::onStatus(std::function<void(int)> cb) {
+void WifiService::onStatus(std::function<void(int)> cb) {
     status_callback = cb;
 }
 
-void WifiManager::loadCredentials() {
+void WifiService::loadCredentials() {
     nvs_handle_t nvs_handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs_handle);
     if (err != ESP_OK) {
@@ -289,7 +289,7 @@ void WifiManager::loadCredentials() {
              sta_ssid.c_str(), sta_pass.empty() ? "(empty)" : "****");
 }
 
-void WifiManager::saveCredentials(const char* ssid, const char* pass) {
+void WifiService::saveCredentials(const char* ssid, const char* pass) {
     nvs_handle_t nvs_handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
     if (err != ESP_OK) {
@@ -324,20 +324,20 @@ void WifiManager::saveCredentials(const char* ssid, const char* pass) {
              sta_ssid.c_str(), sta_pass.empty() ? "(empty)" : "****");
 }
 
-void WifiManager::registerEvents() {
+void WifiService::registerEvents() {
     ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
                                                         ESP_EVENT_ANY_ID,
-                                                        &WifiManager::wifi_event_handler,
+                                                        &WifiService::wifi_event_handler,
                                                         this,
                                                         nullptr));
     ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT,
                                                         IP_EVENT_STA_GOT_IP,
-                                                        &WifiManager::ip_event_handler,
+                                                        &WifiService::ip_event_handler,
                                                         this,
                                                         nullptr));
 }
 
-void WifiManager::scanNetworks(std::vector<WifiInfo>& networks) {
+void WifiService::scanNetworks(std::vector<WifiInfo>& networks) {
     wifi_scan_config_t scan_config = {};
     scan_config.show_hidden = false;
 
@@ -372,9 +372,9 @@ void WifiManager::scanNetworks(std::vector<WifiInfo>& networks) {
     
 }
 
-void WifiManager::wifi_event_handler(void* arg, esp_event_base_t event_base,
+void WifiService::wifi_event_handler(void* arg, esp_event_base_t event_base,
                                      int32_t event_id, void* event_data) {
-    WifiManager* self = static_cast<WifiManager*>(arg);
+    WifiService* self = static_cast<WifiService*>(arg);
     if (event_base == WIFI_EVENT) {
         switch (event_id) {
         case WIFI_EVENT_STA_START:
@@ -402,9 +402,9 @@ void WifiManager::wifi_event_handler(void* arg, esp_event_base_t event_base,
     }
 }
 
-void WifiManager::ip_event_handler(void* arg, esp_event_base_t event_base,
+void WifiService::ip_event_handler(void* arg, esp_event_base_t event_base,
                                    int32_t event_id, void* event_data) {
-    WifiManager* self = static_cast<WifiManager*>(arg);
+    WifiService* self = static_cast<WifiService*>(arg);
     if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*)event_data;
         ESP_LOGI(TAG, "Got IP: " IPSTR, IP2STR(&event->ip_info.ip));

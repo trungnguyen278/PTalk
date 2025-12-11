@@ -1,278 +1,269 @@
 #include "DisplayDriver.hpp"
-#include <cstring>
+#include "Framebuffer.hpp"
 #include "esp_log.h"
-#include "esp_timer.h"
+#include "driver/gpio.h"
 #include "driver/spi_master.h"
-#include "driver/ledc.h"
+#include <cstring>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
 
 static const char* TAG = "DisplayDriver";
 
-// ST7789 Commands
-#define CMD_NOP       0x00
-#define CMD_SWRESET   0x01
-#define CMD_SLPOUT    0x11
-#define CMD_DISPON    0x29
-#define CMD_CASET     0x2A
-#define CMD_RASET     0x2B
-#define CMD_RAMWR     0x2C
-#define CMD_MADCTL    0x36
-#define CMD_COLMOD    0x3A
+#define ST7789_CMD_SWRESET   0x01
+#define ST7789_CMD_SLPOUT    0x11
+#define ST7789_CMD_COLMOD    0x3A
+#define ST7789_CMD_MADCTL    0x36
+#define ST7789_CMD_CASET     0x2A
+#define ST7789_CMD_RASET     0x2B
+#define ST7789_CMD_RAMWR     0x2C
+#define ST7789_CMD_DISPON    0x29
 
-// MADCTL flags
-#define MADCTL_MX 0x40
-#define MADCTL_MY 0x80
-#define MADCTL_MV 0x20
-#define MADCTL_BGR 0x08
+// MADCTL bits
+#define ST7789_MADCTL_MY  0x80
+#define ST7789_MADCTL_MX  0x40
+#define ST7789_MADCTL_MV  0x20
+#define ST7789_MADCTL_ML  0x10
+#define ST7789_MADCTL_BGR 0x08
+#define ST7789_MADCTL_MH  0x04
 
 
-// ============================================================================
-// CONSTRUCTOR / DESTRUCTOR
-// ============================================================================
-DisplayDriver::DisplayDriver(const DisplaySpiConfig& config)
-    : cfg(config), _width(config.width), _height(config.height)
-{}
+// ----------------------------------------------------------------------------
+// Constructor / Destructor
+// ----------------------------------------------------------------------------
+
+DisplayDriver::DisplayDriver() = default;
 
 DisplayDriver::~DisplayDriver() {
     if (spi_dev) {
         spi_bus_remove_device(spi_dev);
+        spi_dev = nullptr;
     }
-    // Bus deinit optional — let application decide
 }
 
 
-// ============================================================================
-// INIT ROUTINE (public)
-// ============================================================================
-esp_err_t DisplayDriver::init() {
-    ESP_LOGI(TAG, "Initializing DisplayDriver...");
-    ESP_ERROR_CHECK(initSpiBus());
-    ESP_ERROR_CHECK(initSpiDevice());
+// ----------------------------------------------------------------------------
+// Low-level SPI helpers
+// ----------------------------------------------------------------------------
 
-    hwReset();
-    ESP_ERROR_CHECK(initPanelST7789());
-    initBacklight();
+void DisplayDriver::sendCommand(uint8_t cmd)
+{
+    gpio_set_level((gpio_num_t)cfg_.pin_dc, 0);   // DC = 0 (command)
 
-    fill(0x0000);
-    return ESP_OK;
-}
-
-
-// ============================================================================
-// SPI INIT
-// ============================================================================
-esp_err_t DisplayDriver::initSpiBus() {
-    spi_bus_config_t buscfg = {};
-    buscfg.sclk_io_num = cfg.pin_sclk;
-    buscfg.mosi_io_num = cfg.pin_mosi;
-    buscfg.miso_io_num = cfg.pin_miso; 
-    buscfg.quadwp_io_num = -1;
-    buscfg.quadhd_io_num = -1;
-    buscfg.max_transfer_sz = cfg.width * cfg.height * 2 + 32;
-
-    esp_err_t ret = spi_bus_initialize(cfg.spi_host, &buscfg, SPI_DMA_CH_AUTO);
-    if (ret == ESP_ERR_INVALID_STATE) return ESP_OK; // Already running bus
-    return ret;
-}
-
-esp_err_t DisplayDriver::initSpiDevice() {
-    spi_device_interface_config_t devcfg = {};
-    devcfg.mode = 0;
-    devcfg.clock_speed_hz = cfg.spi_speed_hz;
-    devcfg.spics_io_num = cfg.pin_cs;
-    devcfg.queue_size = 10;
-    devcfg.flags = SPI_DEVICE_HALFDUPLEX;
-
-    return spi_bus_add_device(cfg.spi_host, &devcfg, &spi_dev);
-}
-
-
-// ============================================================================
-// LOW LEVEL SEND COMMAND/DATA
-// ============================================================================
-void DisplayDriver::sendCommand(uint8_t cmd) {
     spi_transaction_t t = {};
     t.length = 8;
     t.tx_buffer = &cmd;
-    gpio_set_level(cfg.pin_dc, 0); // DC = Command
     spi_device_transmit(spi_dev, &t);
 }
 
-void DisplayDriver::sendData(const void* data, size_t len) {
+void DisplayDriver::sendData(const uint8_t* data, size_t len)
+{
     if (!len) return;
+
+    gpio_set_level((gpio_num_t)cfg_.pin_dc, 1);   // DC = 1 (data)
+
     spi_transaction_t t = {};
     t.length = len * 8;
     t.tx_buffer = data;
-    gpio_set_level(cfg.pin_dc, 1); // DC = Data
     spi_device_transmit(spi_dev, &t);
 }
 
+void DisplayDriver::setAddressWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
+{
+    uint8_t col_data[4] = {
+        (uint8_t)(x0 >> 8), (uint8_t)(x0 & 0xFF),
+        (uint8_t)(x1 >> 8), (uint8_t)(x1 & 0xFF)
+    };
+    uint8_t row_data[4] = {
+        (uint8_t)(y0 >> 8), (uint8_t)(y0 & 0xFF),
+        (uint8_t)(y1 >> 8), (uint8_t)(y1 & 0xFF)
+    };
 
-// ============================================================================
-// PANEL RESET & INIT (ST7789)
-// ============================================================================
-void DisplayDriver::hwReset() {
-    if (cfg.pin_rst == GPIO_NUM_NC) return;
-    gpio_set_direction(cfg.pin_rst, GPIO_MODE_OUTPUT);
-    gpio_set_level(cfg.pin_rst, 1);
-    esp_rom_delay_us(5000);
-    gpio_set_level(cfg.pin_rst, 0);
-    esp_rom_delay_us(5000);
-    gpio_set_level(cfg.pin_rst, 1);
-    esp_rom_delay_us(5000);
-}
+    sendCommand(ST7789_CMD_CASET);
+    sendData(col_data, 4);
 
-esp_err_t DisplayDriver::initPanelST7789() {
-    sendCommand(CMD_SWRESET);
-    esp_rom_delay_us(150000);
+    sendCommand(ST7789_CMD_RASET);
+    sendData(row_data, 4);
 
-    sendCommand(CMD_SLPOUT);
-    esp_rom_delay_us(150000);
-
-    // Color mode = RGB565
-    sendCommand(CMD_COLMOD);
-    sendData8(0x55);
-    esp_rom_delay_us(10000);
-
-    setRotation(cfg.rotation);
-
-    sendCommand(CMD_DISPON);
-    esp_rom_delay_us(50000);
-
-    return ESP_OK;
+    sendCommand(ST7789_CMD_RAMWR);
 }
 
 
-// ============================================================================
-// ROTATION (MADCTL)
-// ============================================================================
-void DisplayDriver::updateMadctl() {
-    uint8_t madctl = MADCTL_BGR;
+// ----------------------------------------------------------------------------
+// Backlight control
+// ----------------------------------------------------------------------------
 
-    switch (_rotation % 4) {
-        case 0:
-            _width = cfg.width;
-            _height = cfg.height;
-            madctl |= 0;
-            break;
-        case 1:
-            _width = cfg.height;
-            _height = cfg.width;
-            madctl |= MADCTL_MV | MADCTL_MY;
-            break;
-        case 2:
-            _width = cfg.width;
-            _height = cfg.height;
-            madctl |= MADCTL_MX | MADCTL_MY;
-            break;
-        case 3:
-            _width = cfg.height;
-            _height = cfg.width;
-            madctl |= MADCTL_MV | MADCTL_MX;
-            break;
-    }
-
-    sendCommand(CMD_MADCTL);
-    sendData8(madctl);
-}
-
-void DisplayDriver::setRotation(uint8_t rotation) {
-    _rotation = rotation % 4;
-    updateMadctl();
-}
-
-
-// ============================================================================
-// BACKLIGHT
-// ============================================================================
-void DisplayDriver::initBacklight() {
-    if (cfg.pin_bl == GPIO_NUM_NC) return;
-
-    ledc_timer_config_t tc = {};
-    tc.speed_mode = LEDC_LOW_SPEED_MODE;
-    tc.timer_num = cfg.ledc_timer;
-    tc.duty_resolution = LEDC_TIMER_8_BIT;
-    tc.freq_hz = 5000;
-    ledc_timer_config(&tc);
-
-    ledc_channel_config_t cc = {};
-    cc.speed_mode = LEDC_LOW_SPEED_MODE;
-    cc.channel = cfg.ledc_channel;
-    cc.timer_sel = cfg.ledc_timer;
-    cc.gpio_num = cfg.pin_bl;
-    cc.duty = 0;
-    ledc_channel_config(&cc);
-
-    setBrightness(100);
-}
-
-void DisplayDriver::setBrightness(uint8_t percent) {
-    if (cfg.pin_bl == GPIO_NUM_NC) return;
-    if (percent > 100) percent = 100;
-    uint32_t duty = (percent * 255) / 100;
-    ledc_set_duty(LEDC_LOW_SPEED_MODE, cfg.ledc_channel, duty);
-    ledc_update_duty(LEDC_LOW_SPEED_MODE, cfg.ledc_channel);
-}
-
-
-// ============================================================================
-// SET WINDOW & PUSH PIXELS (STREAMING)
-// ============================================================================
-void DisplayDriver::setWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1) {
-    x0 += cfg.x_offset;
-    x1 += cfg.x_offset;
-    y0 += cfg.y_offset;
-    y1 += cfg.y_offset;
-
-    sendCommand(CMD_CASET);
-    uint8_t data1[4] = { uint8_t(x0 >> 8), uint8_t(x0), uint8_t(x1 >> 8), uint8_t(x1) };
-    sendData(data1, 4);
-
-    sendCommand(CMD_RASET);
-    uint8_t data2[4] = { uint8_t(y0 >> 8), uint8_t(y0), uint8_t(y1 >> 8), uint8_t(y1) };
-    sendData(data2, 4);
-
-    sendCommand(CMD_RAMWR);
-}
-
-void DisplayDriver::pushPixels(const uint16_t* data, size_t count) {
-    sendData(data, count * sizeof(uint16_t));
-}
-
-void DisplayDriver::pushColor(uint16_t color, size_t count) {
-    const size_t bufsize = 64;
-    uint16_t buf[bufsize];
-    for (int i = 0; i < bufsize; i++) buf[i] = color;
-
-    while (count > 0) {
-        size_t chunk = (count > bufsize) ? bufsize : count;
-        pushPixels(buf, chunk);
-        count -= chunk;
+void DisplayDriver::setBacklight(bool on)
+{
+    if (cfg_.pin_bl >= 0) {
+        gpio_set_direction((gpio_num_t)cfg_.pin_bl, GPIO_MODE_OUTPUT);
+        gpio_set_level((gpio_num_t)cfg_.pin_bl, on ? 1 : 0);
     }
 }
 
 
-// ============================================================================
-// BASIC DRAW APIS
-// ============================================================================
-void DisplayDriver::fill(uint16_t color) {
-    setWindow(0, 0, _width - 1, _height - 1);
-    pushColor(color, _width * _height);
+// ----------------------------------------------------------------------------
+// Init sequence
+// ----------------------------------------------------------------------------
+
+bool DisplayDriver::init(const Config& cfg)
+{
+    cfg_ = cfg;
+    width_ = cfg.width;
+    height_ = cfg.height;
+
+    ESP_LOGI(TAG, "Init ST7789 %dx%d", width_, height_);
+
+    // 1. Init SPI bus
+    spi_bus_config_t buscfg = {};
+    buscfg.mosi_io_num = cfg.pin_mosi;
+    buscfg.miso_io_num = -1;  // not used
+    buscfg.sclk_io_num = cfg.pin_sclk;
+    buscfg.quadwp_io_num = -1;
+    buscfg.quadhd_io_num = -1;
+    buscfg.max_transfer_sz = width_ * height_ * 2;
+
+    ESP_ERROR_CHECK(spi_bus_initialize(cfg.spi_host, &buscfg, cfg.dma_chan));
+
+    // 2. Add device
+    spi_device_interface_config_t devcfg = {};
+    devcfg.clock_speed_hz = cfg.spi_speed_hz;
+    devcfg.mode = 0;
+    devcfg.spics_io_num = cfg.pin_cs;
+    devcfg.queue_size = 7;
+
+    ESP_ERROR_CHECK(spi_bus_add_device(cfg.spi_host, &devcfg, &spi_dev));
+
+    // 3. Init GPIO (DC, RST, BL)
+    if (cfg.pin_dc >= 0) {
+        gpio_set_direction((gpio_num_t)cfg.pin_dc, GPIO_MODE_OUTPUT);
+    }
+    if (cfg.pin_rst >= 0) {
+        gpio_set_direction((gpio_num_t)cfg.pin_rst, GPIO_MODE_OUTPUT);
+        gpio_set_level((gpio_num_t)cfg.pin_rst, 0);
+        vTaskDelay(pdMS_TO_TICKS(50));
+        gpio_set_level((gpio_num_t)cfg.pin_rst, 1);
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    if (cfg.pin_bl >= 0) {
+        gpio_set_direction((gpio_num_t)cfg.pin_bl, GPIO_MODE_OUTPUT);
+        gpio_set_level((gpio_num_t)cfg.pin_bl, 1);
+    }
+
+    // 4. Send ST7789 init commands
+    sendCommand(ST7789_CMD_SWRESET);
+    vTaskDelay(pdMS_TO_TICKS(150));
+
+    sendCommand(ST7789_CMD_SLPOUT);
+    vTaskDelay(pdMS_TO_TICKS(150));
+
+    uint8_t colmod = 0x55; // RGB565
+    sendCommand(ST7789_CMD_COLMOD);
+    sendData(&colmod, 1);
+
+    uint8_t madctl =
+        ST7789_MADCTL_MX |
+        ST7789_MADCTL_MY |
+        ST7789_MADCTL_BGR;
+
+    sendCommand(ST7789_CMD_MADCTL);
+    sendData(&madctl, 1);
+
+    sendCommand(ST7789_CMD_DISPON);
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    initialized = true;
+
+    ESP_LOGI(TAG, "ST7789 init OK");
+    return true;
 }
 
-void DisplayDriver::drawBitmap(uint16_t x,
-                               uint16_t y,
-                               uint16_t w,
-                               uint16_t h,
-                               const uint16_t* pixels)
+// ----------------------------------------------------------------------------
+// Flush full framebuffer to screen
+// ----------------------------------------------------------------------------
+void DisplayDriver::flush(Framebuffer* fb)
 {
-    setWindow(x, y, x + w - 1, y + h - 1);
-    pushPixels(pixels, w * h);
+    if (!initialized || !fb) return;
+
+    setAddressWindow(0, 0, width_ - 1, height_ - 1);
+
+    gpio_set_level((gpio_num_t)cfg_.pin_dc, 1);
+
+    spi_transaction_t t = {};
+    t.length = width_ * height_ * 16;
+    t.tx_buffer = fb->data();   // thêm getter: return pixels_;
+    ESP_ERROR_CHECK(spi_device_transmit(spi_dev, &t));
 }
 
-void DisplayDriver::drawScanline(uint16_t y,
-                                 const uint16_t* pixels,
-                                 uint16_t width)
+
+
+// ----------------------------------------------------------------------------
+// Drawing primitives
+// ----------------------------------------------------------------------------
+
+void DisplayDriver::fillScreen(uint16_t color)
 {
-    setWindow(0, y, width - 1, y);
-    pushPixels(pixels, width);
+    if (!initialized) return;
+
+    uint32_t total_pixels = width_ * height_;
+
+    setAddressWindow(0, 0, width_ - 1, height_ - 1);
+
+    gpio_set_level((gpio_num_t)cfg_.pin_dc, 1); // data
+
+    spi_transaction_t t = {};
+    t.length = 16 * 1024 * 8;
+    t.tx_buffer = nullptr;
+
+    uint16_t line_buf[240];
+    for (int i = 0; i < 240; i++) line_buf[i] = color;
+
+    for (uint32_t i = 0; i < height_; i++) {
+        t.tx_buffer = line_buf;
+        ESP_ERROR_CHECK(spi_device_transmit(spi_dev, &t));
+    }
+}
+
+
+void DisplayDriver::drawPixel(int x, int y, uint16_t color)
+{
+    if (!initialized) return;
+    if (x < 0 || x >= width_ || y < 0 || y >= height_) return;
+
+    setAddressWindow(x, y, x, y);
+    sendData((uint8_t*)&color, 2);
+}
+
+
+void DisplayDriver::drawBitmap(int x, int y, int w, int h, const uint16_t* pixels)
+{
+    if (!initialized || !pixels) return;
+    if (w <= 0 || h <= 0) return;
+
+    setAddressWindow(x, y, x + w - 1, y + h - 1);
+    sendData((uint8_t*)pixels, w * h * 2);
+}
+
+
+// ----------------------------------------------------------------------------
+// Text rendering (very simple bitmap font)
+// ----------------------------------------------------------------------------
+
+void DisplayDriver::drawText(Framebuffer* fb, const char* text, uint16_t color, int x, int y)
+{
+    if (!fb || !text) return;
+
+    fb->drawText8x8(x, y, text, color);
+}
+
+void DisplayDriver::drawTextCenter(Framebuffer* fb, const char* text, uint16_t color, int cx, int cy)
+{
+    if (!fb || !text) return;
+
+    int len = strlen(text);
+    int text_w = len * 8;
+    int x = cx - text_w / 2;
+    int y = cy - 4;
+
+    fb->drawText8x8(x, y, text, color);
 }

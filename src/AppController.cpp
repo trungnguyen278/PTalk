@@ -48,8 +48,8 @@ bool AppController::init() {
     // Ví dụ:
     // network = std::make_unique<NetworkManager>();
     // audio   = std::make_unique<AudioManager>();
-    // display = std::make_unique<DisplayAnimator>();
-    // power   = std::make_unique<PowerManager>();
+    display = std::make_unique<DisplayManager>();
+    power   = std::make_unique<PowerManager>();
     // config  = std::make_unique<ConfigManager>();
     // ota     = std::make_unique<OTAUpdater>();
     // touch   = std::make_unique<TouchInput>();
@@ -113,6 +113,9 @@ void AppController::start() {
 
     started.store(true);
 
+    // ---------------------------------------------------------------------
+    // 1) Start the main controller task (state + event dispatcher)
+    // ---------------------------------------------------------------------
     BaseType_t res = xTaskCreatePinnedToCore(
         &AppController::controllerTask,
         "AppControllerTask",
@@ -120,18 +123,60 @@ void AppController::start() {
         this,
         4,
         &app_task,
-        1   // core 1 (tùy chỉnh)
+        1  // core 1
     );
 
     if (res != pdPASS) {
         ESP_LOGE(TAG, "Failed to create AppControllerTask");
         started.store(false);
+        return;
     }
+
+    // ---------------------------------------------------------------------
+    // 2) Start UI task (DisplayManager update loop)
+    // ---------------------------------------------------------------------
+    if (display) {
+        BaseType_t r2 = xTaskCreatePinnedToCore(
+            &AppController::uiTaskEntry,
+            "UI_Task",
+            4096,
+            this,
+            3,      // slightly lower priority than app controller
+            nullptr,
+            1       // core 1
+        );
+
+        if (r2 != pdPASS) {
+            ESP_LOGE(TAG, "Failed to create UI Task");
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // 3) Start PowerManager (uses FreeRTOS Timer, NO TASK NEEDED)
+    // ---------------------------------------------------------------------
+    if (power) {
+        if (!power->init()) {
+            ESP_LOGE(TAG, "PowerManager init failed");
+        } else {
+            power->start();
+        }
+    }
+
+    ESP_LOGI(TAG, "AppController started");
 }
+
 
 void AppController::stop() {
     started.store(false);
-    // Task tự vTaskDelete trong processQueue khi thoát vòng while
+
+    if (power) {
+        power->stop();   // stop timer
+    }
+
+    // controllerTask sẽ tự hủy trong processQueue()
+    // uiTask sẽ tự hủy trong uiLoop()
+
+    ESP_LOGW(TAG, "AppController stopping...");
 }
 
 // ===================== External actions =====================
@@ -237,6 +282,14 @@ void AppController::processQueue() {
                         case event::AppEvent::POWER_RECOVER:
                             StateManager::instance().setPowerState(state::PowerState::NORMAL);
                             break;
+                        case event::AppEvent::BATTERY_PERCENT_CHANGED:
+                            // Có thể dùng để điều chỉnh UX tuỳ theo mức pin
+                            if (power && display) {
+                                display->setBatteryPercent(power->getPercent());
+                            }
+                            break;
+                            // Hiện tại chưa làm gì
+                            break;
                         case event::AppEvent::OTA_BEGIN:
                             StateManager::instance().setSystemState(state::SystemState::UPDATING_FIRMWARE);
                             // TODO: ota->begin();
@@ -273,6 +326,30 @@ void AppController::processQueue() {
     vTaskDelete(nullptr);
 }
 
+void AppController::uiTaskEntry(void* param) {
+    auto* self = static_cast<AppController*>(param);
+    if (!self) {
+        vTaskDelete(nullptr);
+        return;
+    }
+    self->uiLoop();
+}
+
+void AppController::uiLoop() {
+    ESP_LOGI(TAG, "UI task started");
+
+    const TickType_t delayMs = pdMS_TO_TICKS(33);  // 33ms
+
+    while (started.load()) {
+        if (display) {
+            display->update(33);
+        }
+        vTaskDelay(delayMs);
+    }
+
+    ESP_LOGW(TAG, "UI task stopping");
+    vTaskDelete(nullptr);
+}
 // ===================== State callbacks logic =====================
 
 // Flow A: auto từ TRIGGERED → LISTENING

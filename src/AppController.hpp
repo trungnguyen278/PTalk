@@ -7,6 +7,9 @@
 #include "freertos/queue.h"
 #include "freertos/task.h"
 
+#include "system/DisplayManager.hpp"
+#include "system/PowerManager.hpp"
+
 // Optional External Messages / Intent / Commands (Key future extensibility)
 namespace event {
 enum class AppEvent : uint8_t {
@@ -20,19 +23,20 @@ enum class AppEvent : uint8_t {
     OTA_FINISHED,
     POWER_LOW,
     POWER_RECOVER,
+    BATTERY_PERCENT_CHANGED,
     CANCEL_REQUEST,
     SLEEP_REQUEST,
     WAKE_REQUEST
 };
 }
 
-class NetworkManager;      // WiFi + WebSocket
-class AudioManager;        // Mic / Speaker
-class DisplayAnimator;     // UI / Animation
-class PowerManager;        // Battery & power strategy
-class TouchInput;          // Buttons or Touch Sensor
-class OTAUpdater;          // Firmware update
-class ConfigManager;       // Configuration, NVS
+// class NetworkManager;      // WiFi + WebSocket
+// class AudioManager;        // Mic / Speaker
+// class DisplayManager;     // UI / Animation
+// class PowerManager;        // Battery & power strategy
+// class TouchInput;          // Buttons or Touch Sensor
+// class OTAUpdater;          // Firmware update
+// class ConfigManager;       // Configuration, NVS
 
 /**
  * AppController:
@@ -65,8 +69,16 @@ private:
     AppController& operator=(const AppController&) = delete;
 
     // ======= Task Loop =======
+        // Controller Task
     static void controllerTask(void* param);
     void processQueue();
+
+        // UI Task
+    static void uiTaskEntry(void* param);
+    void uiLoop();
+
+
+    //TODO: thêm các task khác nếu cần
 
     // ======= State callbacks =======
     void onInteractionStateChanged(state::InteractionState, state::InputSource);
@@ -84,10 +96,10 @@ private:
     // ======= Module pointers =======
     std::unique_ptr<NetworkManager> network;
     std::unique_ptr<AudioManager> audio;
-    std::unique_ptr<DisplayAnimator> display;
+    std::unique_ptr<DisplayManager> display;
     std::unique_ptr<PowerManager> power;
-    std::unique_ptr<ConfigManager> config;
-    std::unique_ptr<OTAUpdater> ota;
+    //std::unique_ptr<ConfigManager> config;
+    //std::unique_ptr<OTAUpdater> ota;
     std::unique_ptr<TouchInput> touch;
 
     // ======= Task & Queue =======

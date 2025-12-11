@@ -58,14 +58,12 @@
 #include "esp_log.h"
 // #include "esp_websocket_client.h"
 
-#include "../lib/display/Display.hpp"
-#include "../lib/display/DisplayTypes.hpp"
+
 #include "system/StateManager.hpp"
-#include "../lib/display/DisplayAnimator.hpp"
+
 #include "../lib/power/Power.hpp"
 
 
-#include "vuive.hpp"
 
 static const char *TAG = "MAIN_TEST";
 
@@ -81,27 +79,7 @@ extern "C" void app_main(void)
 {
     ESP_LOGI(TAG, "Khoi dong he thong test Display...");
 
-    // 1. CẤU HÌNH (Lấy từ main.txt cũ của bạn)
-    DisplayConfig cfg = {
-        240,          // width
-        240,          // height
-        21,           // pin_mosi
-        23,           // pin_sclk
-        5,            // pin_cs
-        18,           // pin_dc
-        19,           // pin_rst
-        27,           // pin_bl
-        SPI2_HOST,    // host
-        40000000,     // spi_speed_hz
-        LEDC_CHANNEL_0, // ledc_channel
-        LEDC_TIMER_0,   // ledc_timer
-        0x0000,       // default_bg
-        2             // rotation
-    };
 
-
-    Display display(cfg);
-    display.init();
     
     Power power(ADC1_CHANNEL_5, 10000, 20000);
 
@@ -127,16 +105,11 @@ extern "C" void app_main(void)
     // }
 
 
-    const TickType_t delayMs = pdMS_TO_TICKS(50000);  // 5s
-    char buf[32];
+    const TickType_t delayMs = pdMS_TO_TICKS(5000);  // 5s
+
 
     while (true)
     {   
-        display.clear();
-        uint8_t percent = power.getBatteryPercent();
-        printf("Battery: %d%%\n", percent);
-        snprintf(buf, sizeof(buf), "Battery: %d%%", percent);
-        display.drawText(buf, 20, 100, 2, 0xFFFF);
 
         vTaskDelay(delayMs);
     }

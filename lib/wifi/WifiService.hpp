@@ -20,7 +20,7 @@ struct WifiInfo {
 };
 
 /**
- *  WifiManager
+ *  WifiService
  *  -----------------------------
  *  Nhiệm vụ:
  *   - Khởi tạo WiFi (NVS, Netif, Event loop)
@@ -30,10 +30,10 @@ struct WifiInfo {
  *   - Callback khi trạng thái WiFi thay đổi
  */
 
-class WifiManager {
+class WifiService {
 public:
-    static WifiManager& instance() {
-    static WifiManager inst;
+    static WifiService& instance() {
+    static WifiService inst;
     return inst;
 }     // Singleton
 
@@ -54,7 +54,7 @@ public:
     // ==== WIFI SCAN ====
     std::vector<WifiInfo> getAvailableNetworks() {
         std::vector<WifiInfo> networks;
-        WifiManager::instance().scanNetworks(networks);
+        WifiService::instance().scanNetworks(networks);
         return networks;
     }
 
@@ -70,9 +70,9 @@ public:
     void onStatus(std::function<void(int)> cb);
 
 private:
-    WifiManager() = default;
-    WifiManager(const WifiManager&) = delete;
-    WifiManager& operator=(const WifiManager&) = delete;
+    WifiService() = default;
+    WifiService(const WifiService&) = delete;
+    WifiService& operator=(const WifiService&) = delete;
 
     // ==== Internal helpers ====
     void loadCredentials();              // Đọc SSID/PASS từ NVS

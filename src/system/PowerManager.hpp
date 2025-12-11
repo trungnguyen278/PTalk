@@ -55,6 +55,7 @@ private:
 
     // cache
     float last_voltage = 0.0f;
+    uint8_t last_percent_sent = 255;
     uint8_t last_percent = 0;
     state::PowerState current_state = state::PowerState::NORMAL;
 

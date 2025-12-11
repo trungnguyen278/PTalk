@@ -1,4 +1,5 @@
 #include "PowerManager.hpp"
+#include "AppController.hpp"
 #include "../../lib/power/Power.hpp"        // driver của bạn
 #include "esp_log.h"
 
@@ -65,10 +66,9 @@ void PowerManager::timerCallback() {
 
     float voltage = power->getVoltage();
     uint8_t percent = power->getBatteryPercent();
-    uint8_t charging = power->isCharging();  // 1 or STATUS_UNKNOWN
-    uint8_t full = power->isFull();          // 1 or STATUS_UNKNOWN
+    uint8_t charging = power->isCharging();
+    uint8_t full = power->isFull();
 
-    // Detect battery removed / floating input OR invalid reading
     if (voltage < 0.0f || percent == BATTERY_INVALID) {
         battery_present = false;
         publishIfChanged(state::PowerState::ERROR);
@@ -78,7 +78,6 @@ void PowerManager::timerCallback() {
     battery_present = true;
     last_voltage = voltage;
 
-    // Smoothing
     if (config.enable_smoothing) {
         if (first_sample) {
             last_percent = percent;
@@ -94,9 +93,18 @@ void PowerManager::timerCallback() {
     ui_charging = (charging == 1);
     ui_full = (full == 1);
 
+    // ====================================================================
+    // NEW: notify percent change
+    // ====================================================================
+    if (last_percent_sent != last_percent) {
+        last_percent_sent = last_percent;
+        AppController::instance().postEvent(event::AppEvent::BATTERY_PERCENT_CHANGED);
+    }
+
     auto newState = evaluateState(last_voltage, last_percent, charging, full);
     publishIfChanged(newState);
 }
+
 
 
 state::PowerState PowerManager::evaluateState(float volt,
