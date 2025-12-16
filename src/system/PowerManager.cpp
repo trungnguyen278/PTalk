@@ -5,8 +5,8 @@
 
 static const char* TAG = "PowerManager";
 
-PowerManager::PowerManager(Power* power, const Config& cfg)
-    : power(power), config(cfg) {}
+PowerManager::PowerManager(std::unique_ptr<Power> power, const Config& cfg)
+    : power(std::move(power)), config(cfg) {}
 
 PowerManager::~PowerManager() {
     stop();

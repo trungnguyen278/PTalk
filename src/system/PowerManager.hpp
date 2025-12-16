@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include <memory>
 #include "StateTypes.hpp"
 #include "StateManager.hpp"
 #include "freertos/FreeRTOS.h"
@@ -18,7 +19,7 @@ public:
     };
 
 public:
-    PowerManager(Power* power, const Config& cfg);
+    PowerManager(std::unique_ptr<Power> power, const Config& cfg);
     ~PowerManager();
 
     bool init();
@@ -48,7 +49,7 @@ private:
     uint8_t applySmoothing(uint8_t percent);
 
 private:
-    Power* power;
+    std::unique_ptr<Power> power;
     Config config;
     TimerHandle_t timer = nullptr;
     bool started = false;
