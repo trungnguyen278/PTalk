@@ -1,4 +1,11 @@
 #include "AppController.hpp"
+#include "system/NetworkManager.hpp"
+#include "system/AudioManager.hpp"
+#include "system/DisplayManager.hpp"
+#include "system/PowerManager.hpp"
+#include "../../lib/touch/TouchInput.hpp"
+#include "system/OTAUpdater.hpp"
+
 #include "esp_log.h"
 
 #include <utility>
@@ -39,7 +46,8 @@ void AppController::attachModules(std::unique_ptr<DisplayManager> displayIn,
                                   std::unique_ptr<AudioManager> audioIn,
                                   std::unique_ptr<NetworkManager> networkIn,
                                   std::unique_ptr<PowerManager> powerIn,
-                                  std::unique_ptr<TouchInput> touchIn)
+                                  std::unique_ptr<TouchInput> touchIn,
+                                  std::unique_ptr<OTAUpdater> otaIn)
 {
     if (started.load()) {
         ESP_LOGW(TAG, "attachModules called after start; ignoring");
@@ -51,6 +59,7 @@ void AppController::attachModules(std::unique_ptr<DisplayManager> displayIn,
     network = std::move(networkIn);
     power   = std::move(powerIn);
     touch   = std::move(touchIn);
+    ota     = std::move(otaIn);
 }
 
 bool AppController::init() {
@@ -69,6 +78,7 @@ bool AppController::init() {
     if (!network) ESP_LOGW(TAG, "NetworkManager not attached");
     if (!power)   ESP_LOGW(TAG, "PowerManager not attached");
     if (!touch)   ESP_LOGW(TAG, "TouchInput not attached");
+    if (!ota)     ESP_LOGW(TAG, "OTAUpdater not attached");
 
     // Subcribes StateManager
     auto& sm = StateManager::instance();
@@ -309,11 +319,88 @@ void AppController::processQueue() {
                             break;
                         case event::AppEvent::OTA_BEGIN:
                             StateManager::instance().setSystemState(state::SystemState::UPDATING_FIRMWARE);
-                            // TODO: ota->begin();
+                            if (display) {
+                                display->showOTAUpdating();
+                                display->setOTAStatus("Requesting update from server...");
+                            }
+                            // Request firmware from server
+                            if (network) {
+                                // Set up callbacks for firmware chunks
+                                network->onFirmwareChunk([this](const uint8_t* data, size_t size) {
+                                    if (ota) {
+                                        int written = ota->writeChunk(data, size);
+                                        if (written > 0 && display) {
+                                            uint8_t percent = ota->getProgressPercent();
+                                            display->setOTAProgress(percent);
+                                        }
+                                    }
+                                });
+
+                                network->onFirmwareComplete([this](bool success, const std::string& msg) {
+                                    if (success) {
+                                        if (display) {
+                                            display->setOTAStatus("Download complete, validating...");
+                                        }
+                                        // Post event to finish OTA
+                                        postEvent(event::AppEvent::OTA_FINISHED);
+                                    } else {
+                                        if (display) {
+                                            display->showOTAError(msg);
+                                        }
+                                        StateManager::instance().setSystemState(state::SystemState::ERROR);
+                                    }
+                                });
+
+                                // Request firmware update
+                                if (!network->requestFirmwareUpdate()) {
+                                    if (display) {
+                                        display->showOTAError("Failed to request firmware");
+                                    }
+                                    StateManager::instance().setSystemState(state::SystemState::ERROR);
+                                }
+                            }
+                            break;
+                        case event::AppEvent::OTA_DOWNLOAD_START:
+                            // Firmware download started from server
+                            if (display) {
+                                display->setOTAStatus("Downloading firmware...");
+                            }
+                            break;
+                        case event::AppEvent::OTA_DOWNLOAD_CHUNK:
+                            // Firmware chunk being received (handled via callback, not event)
+                            break;
+                        case event::AppEvent::OTA_DOWNLOAD_COMPLETE:
+                            // Download complete, ready to validate
+                            if (display) {
+                                display->setOTAStatus("Download complete");
+                            }
                             break;
                         case event::AppEvent::OTA_FINISHED:
-                            // TODO: ota->finish();
-                            StateManager::instance().setSystemState(state::SystemState::RUNNING);
+                            if (ota && ota->isUpdating()) {
+                                // TODO: ota->finish();
+                                if (ota->finishUpdate()) {
+                                    if (display) {
+                                        display->showOTACompleted();
+                                    }
+                                    // Schedule reboot after a delay
+                                    vTaskDelay(pdMS_TO_TICKS(2000));
+                                    if (display) {
+                                        display->showRebooting();
+                                    }
+                                    vTaskDelay(pdMS_TO_TICKS(1000));
+                                    reboot();
+                                } else {
+                                    if (display) {
+                                        display->showOTAError("Update validation failed");
+                                    }
+                                    StateManager::instance().setSystemState(state::SystemState::ERROR);
+                                }
+                            } else {
+                                if (display) {
+                                    display->showOTAError("No update in progress");
+                                }
+                                StateManager::instance().setSystemState(state::SystemState::ERROR);
+                            }
                             break;
                         case event::AppEvent::SERVER_PROCESSING_START:
                             StateManager::instance().setInteractionState(
@@ -509,7 +596,7 @@ void AppController::onSystemStateChanged(state::SystemState s) {
 
         case state::SystemState::UPDATING_FIRMWARE:
             if (display) {
-                // TODO: display->showUpdating();
+                display->showOTAUpdating();
             }
             if (audio) {
                 // TODO: audio->stopAll();

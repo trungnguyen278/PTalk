@@ -346,7 +346,22 @@ void NetworkManager::handleWsTextMessage(const std::string& msg)
 void NetworkManager::handleWsBinaryMessage(const uint8_t* data, size_t len)
 {
     ESP_LOGI(TAG, "WS Binary Message (%zu bytes)", len);
-    if (on_binary_cb) on_binary_cb(data, len);
+    
+    // Check if this is firmware data during OTA download
+    if (firmware_download_active) {
+        firmware_bytes_received += len;
+        ESP_LOGI(TAG, "Firmware chunk: %zu bytes (total: %u bytes)", len, firmware_bytes_received);
+        
+        // Notify OTA updater
+        if (on_firmware_chunk_cb) {
+            on_firmware_chunk_cb(data, len);
+        }
+    } else {
+        // Regular binary message
+        if (on_binary_cb) {
+            on_binary_cb(data, len);
+        }
+    }
 }
 
 // ============================================================================
@@ -355,4 +370,38 @@ void NetworkManager::handleWsBinaryMessage(const uint8_t* data, size_t len)
 void NetworkManager::publishState(state::ConnectivityState s)
 {
     StateManager::instance().setConnectivityState(s);
+}
+
+// ============================================================================
+// OTA FIRMWARE UPDATE SUPPORT
+// ============================================================================
+bool NetworkManager::requestFirmwareUpdate(const std::string& version)
+{
+    if (!ws || !ws->isConnected()) {
+        ESP_LOGE(TAG, "WebSocket not connected, cannot request firmware");
+        return false;
+    }
+
+    firmware_download_active = true;
+    firmware_bytes_received = 0;
+
+    // Create request message (JSON format)
+    std::string request = "{\"action\":\"update_firmware\"";
+    if (!version.empty()) {
+        request += ",\"version\":\"" + version + "\"";
+    }
+    request += "}";
+
+    ESP_LOGI(TAG, "Requesting firmware update: %s", request.c_str());
+    return sendText(request);
+}
+
+void NetworkManager::onFirmwareChunk(std::function<void(const uint8_t*, size_t)> cb)
+{
+    on_firmware_chunk_cb = cb;
+}
+
+void NetworkManager::onFirmwareComplete(std::function<void(bool, const std::string&)> cb)
+{
+    on_firmware_complete_cb = cb;
 }

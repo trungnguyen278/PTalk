@@ -83,6 +83,28 @@ public:
     /// Callback khi server gửi binary
     void onServerBinary(std::function<void(const uint8_t*, size_t)> cb);
 
+    // ======================================================
+    // OTA Firmware Update Support
+    // ======================================================
+    /**
+     * Request firmware update from server
+     * Server should respond with binary firmware data
+     * @param version Version to request (optional, "" = latest)
+     * @return true if request sent
+     */
+    bool requestFirmwareUpdate(const std::string& version = "");
+
+    /**
+     * Callback when firmware data chunk received from server
+     * Used internally during OTA download
+     */
+    void onFirmwareChunk(std::function<void(const uint8_t*, size_t)> cb);
+
+    /**
+     * Callback when firmware download completes
+     */
+    void onFirmwareComplete(std::function<void(bool success, const std::string& msg)> cb);
+
 private:
     // ======================================================
     // Internal handlers
@@ -137,4 +159,14 @@ private:
     // ======================================================
     std::function<void(const std::string&)> on_text_cb = nullptr;
     std::function<void(const uint8_t*, size_t)> on_binary_cb = nullptr;
+
+    // ======================================================
+    // OTA Callbacks
+    // ======================================================
+    std::function<void(const uint8_t*, size_t)> on_firmware_chunk_cb = nullptr;
+    std::function<void(bool, const std::string&)> on_firmware_complete_cb = nullptr;
+
+    // OTA state
+    bool firmware_download_active = false;
+    uint32_t firmware_bytes_received = 0;
 };

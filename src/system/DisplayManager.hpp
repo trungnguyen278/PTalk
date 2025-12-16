@@ -83,6 +83,40 @@ public:
     // Show short message on screen
     void showToast(const std::string& text, uint32_t duration_ms = 3000);
 
+    // ======= OTA Update UI =======
+    /**
+     * Show OTA update screen
+     */
+    void showOTAUpdating();
+
+    /**
+     * Update OTA progress display
+     * @param current_percent Progress percentage (0-100)
+     */
+    void setOTAProgress(uint8_t current_percent);
+
+    /**
+     * Show OTA status message
+     * @param status Status text (e.g., "Downloading...", "Writing...", "Validating...")
+     */
+    void setOTAStatus(const std::string& status);
+
+    /**
+     * Show OTA completed/success screen
+     */
+    void showOTACompleted();
+
+    /**
+     * Show OTA error screen
+     * @param error_msg Error message
+     */
+    void showOTAError(const std::string& error_msg);
+
+    /**
+     * Show rebooting screen (after OTA success)
+     */
+    void showRebooting();
+
     // Power saving mode (stop animations)
     void setPowerSaveMode(bool enable);
 
@@ -119,6 +153,14 @@ private:
     std::string toast_text;
     uint32_t toast_timer = 0;
     bool toast_active = false;
+
+    // OTA update state
+    uint8_t ota_progress_percent = 0;
+    std::string ota_status_text = "";
+    bool ota_updating = false;
+    bool ota_completed = false;
+    bool ota_error = false;
+    std::string ota_error_msg = "";
 
     // subscriptions
     int sub_inter = -1;

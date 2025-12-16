@@ -24,6 +24,9 @@ public:
     void connect();
     void close();
 
+    // Get connection status
+    bool isConnected() const { return connected; }
+
     void setUrl(const std::string& url);
 
     // Send

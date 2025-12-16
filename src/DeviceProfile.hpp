@@ -17,13 +17,14 @@
 
 class AppController;
 
-class DeviceProfile {
+class DeviceProfile
+{
 public:
     /**
      * Setup toàn bộ hệ thống trước khi AppController::start()
-     * 
+     *
      * @param app  AppController singleton
      * @return true nếu setup OK
      */
-    static bool setup(AppController& app);
+    static bool setup(AppController &app);
 };

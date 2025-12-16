@@ -432,3 +432,104 @@ void DisplayManager::playIcon(const std::string& name, int x, int y)
 
     fb->drawBitmap(x, y, ico.w, ico.h, ico.rgb);
 }
+
+// ============================================================================
+// OTA Update UI Functions
+// ============================================================================
+
+void DisplayManager::showOTAUpdating()
+{
+    ESP_LOGI(TAG, "Showing OTA updating screen");
+    ota_updating = true;
+    ota_completed = false;
+    ota_error = false;
+    ota_progress_percent = 0;
+    ota_status_text = "Starting update...";
+    
+    if (!fb || !drv) return;
+    
+    fb->clear(0x0000);  // Clear screen (black background)
+    // TODO: Draw "Updating Firmware" title and progress bar outline
+    // TODO: Display initial message
+    drv->flush(fb.get());
+}
+
+void DisplayManager::setOTAProgress(uint8_t current_percent)
+{
+    if (current_percent > 100) current_percent = 100;
+    
+    ota_progress_percent = current_percent;
+    
+    if (!fb || !drv) return;
+    
+    // Update progress bar on display (0-100%)
+    // TODO: Draw progress bar visual
+    // Example: draw bar from left to right
+    // int bar_width = (width_ * current_percent) / 100;
+    // fb->drawRect(10, 120, bar_width, 20, 0x07E0);  // green bar
+    
+    ESP_LOGD(TAG, "OTA progress: %u%%", current_percent);
+    drv->flush(fb.get());
+}
+
+void DisplayManager::setOTAStatus(const std::string& status)
+{
+    ota_status_text = status;
+    ESP_LOGI(TAG, "OTA status: %s", status.c_str());
+    
+    if (!fb || !drv) return;
+    
+    // TODO: Display status text on screen
+    // Example: show at bottom of screen
+    drv->flush(fb.get());
+}
+
+void DisplayManager::showOTACompleted()
+{
+    ESP_LOGI(TAG, "Showing OTA completed screen");
+    ota_updating = false;
+    ota_completed = true;
+    ota_error = false;
+    ota_progress_percent = 100;
+    ota_status_text = "Update completed!";
+    
+    if (!fb || !drv) return;
+    
+    fb->clear(0x0000);
+    // TODO: Draw checkmark or success animation
+    // TODO: Display "Update Successful" message
+    drv->flush(fb.get());
+}
+
+void DisplayManager::showOTAError(const std::string& error_msg)
+{
+    ESP_LOGE(TAG, "Showing OTA error: %s", error_msg.c_str());
+    ota_updating = false;
+    ota_completed = false;
+    ota_error = true;
+    ota_error_msg = error_msg;
+    ota_status_text = "Update failed!";
+    
+    if (!fb || !drv) return;
+    
+    fb->clear(0x0000);
+    // TODO: Draw error icon (X mark)
+    // TODO: Display error message
+    drv->flush(fb.get());
+}
+
+void DisplayManager::showRebooting()
+{
+    ESP_LOGI(TAG, "Showing rebooting screen");
+    ota_updating = false;
+    ota_completed = true;
+    ota_error = false;
+    ota_status_text = "Rebooting...";
+    
+    if (!fb || !drv) return;
+    
+    fb->clear(0x0000);
+    // TODO: Draw rebooting animation or countdown
+    // TODO: Display "Device restarting..." message
+    drv->flush(fb.get());
+}
