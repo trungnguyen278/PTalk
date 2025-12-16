@@ -155,7 +155,6 @@ void Framebuffer::drawText8x8(int x, int y, const char* text, uint16_t color)
             ++p;
             continue;
         }
-        int idx = c - 32;
         const uint8_t* glyph = FONT8x8[c - 32];
 
 

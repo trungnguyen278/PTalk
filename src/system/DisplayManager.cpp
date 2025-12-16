@@ -3,12 +3,19 @@
 #include "Framebuffer.hpp"
 #include "AnimationPlayer.hpp"
 
+#include <utility>
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
 #include "esp_log.h"
 
 static const char* TAG = "DisplayManager";
 
 DisplayManager::DisplayManager() = default;
 DisplayManager::~DisplayManager() {
+    // Ensure task is stopped before destruction
+    stopLoop();
     // Unsubscribe
     if (binding_enabled) {
         auto &sm = StateManager::instance();
@@ -22,22 +29,81 @@ DisplayManager::~DisplayManager() {
 // ----------------------------------------------------------------------------
 // Init
 // ----------------------------------------------------------------------------
-bool DisplayManager::init(DisplayDriver* driver, int width, int height)
+bool DisplayManager::init(std::unique_ptr<DisplayDriver> driver, int width, int height)
 {
     if (!driver) {
         ESP_LOGE(TAG, "init: DisplayDriver is null");
         return false;
     }
 
-    drv = driver;
+    drv = std::move(driver);
     width_ = width;
     height_ = height;
 
     fb = std::make_unique<Framebuffer>(width, height);
-    anim_player = std::make_unique<AnimationPlayer>(fb.get(), drv);
+    anim_player = std::make_unique<AnimationPlayer>(fb.get(), drv.get());
 
     ESP_LOGI(TAG, "DisplayManager init OK (%dx%d)", width, height);
     return true;
+}
+
+// ----------------------------------------------------------------------------
+// Task loop management
+// ----------------------------------------------------------------------------
+bool DisplayManager::startLoop(uint32_t interval_ms,
+                               UBaseType_t priority,
+                               uint32_t stackSize,
+                               BaseType_t core)
+{
+    if (task_handle_ != nullptr) {
+        ESP_LOGW(TAG, "startLoop: already running");
+        update_interval_ms_ = interval_ms;
+        return true;
+    }
+    if (!drv || !fb || !anim_player) {
+        ESP_LOGE(TAG, "startLoop: not initialized");
+        return false;
+    }
+
+    update_interval_ms_ = interval_ms;
+
+#if defined(ESP_PLATFORM)
+    BaseType_t rc = xTaskCreatePinnedToCore(
+        &DisplayManager::taskEntry,
+        "DisplayLoop",
+        stackSize,
+        this,
+        priority,
+        &task_handle_,
+        core
+    );
+#else
+    BaseType_t rc = xTaskCreate(
+        &DisplayManager::taskEntry,
+        "DisplayLoop",
+        stackSize,
+        this,
+        priority,
+        &task_handle_
+    );
+#endif
+
+    if (rc != pdPASS) {
+        ESP_LOGE(TAG, "startLoop: xTaskCreate failed (%d)", (int)rc);
+        task_handle_ = nullptr;
+        return false;
+    }
+    ESP_LOGI(TAG, "Display loop started (interval=%ums)", (unsigned)update_interval_ms_);
+    return true;
+}
+
+void DisplayManager::stopLoop()
+{
+    if (task_handle_ == nullptr) return;
+    TaskHandle_t th = task_handle_;
+    task_handle_ = nullptr;
+    vTaskDelete(th);
+    ESP_LOGI(TAG, "Display loop stopped");
 }
 
 // ----------------------------------------------------------------------------
@@ -184,6 +250,23 @@ void DisplayManager::update(uint32_t dt_ms)
 
     // 5) push framebuffer to display
     drv->flush(fb.get());
+}
+
+void DisplayManager::taskEntry(void* arg)
+{
+    auto* self = static_cast<DisplayManager*>(arg);
+    TickType_t prev = xTaskGetTickCount();
+    for (;;) {
+        if (self->task_handle_ == nullptr) {
+            // Stopped; exit task
+            vTaskDelete(nullptr);
+        }
+        TickType_t now = xTaskGetTickCount();
+        uint32_t dt_ms = (now - prev) * portTICK_PERIOD_MS;
+        prev = now;
+        self->update(dt_ms);
+        vTaskDelay(pdMS_TO_TICKS(self->update_interval_ms_));
+    }
 }
 
 // ----------------------------------------------------------------------------

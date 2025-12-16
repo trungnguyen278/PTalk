@@ -10,6 +10,10 @@
 #include "StateManager.hpp"
 #include "AnimationPlayer.hpp"
 
+// FreeRTOS (ESP32 task loop support)
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
 
 // Forward declarations
 class DisplayDriver;       // ST7789 low-level driver
@@ -46,10 +50,20 @@ public:
     ~DisplayManager();
 
     // Initialize with low-level display driver
-    bool init(DisplayDriver* driver, int width = 240, int height = 240);
+    // Takes ownership of the low-level driver to ensure lifetime matches the UI
+    bool init(std::unique_ptr<DisplayDriver> driver, int width = 240, int height = 240);
 
     // Real-time update (should be called every 20–50ms)
     void update(uint32_t dt_ms);
+
+    // Optional internal task loop APIs (alternative to external caller)
+    bool startLoop(uint32_t interval_ms = 33,
+                   UBaseType_t priority = 5,
+                   uint32_t stackSize = 4096,
+                   BaseType_t core = tskNO_AFFINITY);
+    void stopLoop();
+    bool isLoopRunning() const { return task_handle_ != nullptr; }
+    void setUpdateIntervalMs(uint32_t interval_ms) { update_interval_ms_ = interval_ms; }
 
     // Enable/Disable automatic UI updates from StateManager
     void enableStateBinding(bool enable);
@@ -86,10 +100,11 @@ private:
     // Internal asset playback
     void playEmotion(const std::string& name, int x = 0, int y = 0);
     void playIcon(const std::string& name, int x = 0, int y = 0);
+    static void taskEntry(void* arg);
     
 
 private:
-    DisplayDriver* drv = nullptr;
+    std::unique_ptr<DisplayDriver> drv; // owned low-level driver
     std::unique_ptr<Framebuffer> fb;
     std::unique_ptr<AnimationPlayer> anim_player;
 
@@ -115,4 +130,8 @@ private:
 
     int width_ = 240;
     int height_ = 240;
+
+    // Task loop state
+    TaskHandle_t task_handle_ = nullptr;
+    uint32_t update_interval_ms_ = 33; // ~30 FPS
 };

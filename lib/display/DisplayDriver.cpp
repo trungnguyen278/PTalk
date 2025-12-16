@@ -205,8 +205,6 @@ void DisplayDriver::fillScreen(uint16_t color)
 {
     if (!initialized) return;
 
-    uint32_t total_pixels = width_ * height_;
-
     setAddressWindow(0, 0, width_ - 1, height_ - 1);
 
     gpio_set_level((gpio_num_t)cfg_.pin_dc, 1); // data
