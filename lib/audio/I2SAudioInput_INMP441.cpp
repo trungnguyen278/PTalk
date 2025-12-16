@@ -28,7 +28,7 @@ bool I2SAudioInput_INMP441::startCapture()
     i2s_cfg.channel_format = cfg_.use_left_channel
         ? I2S_CHANNEL_FMT_ONLY_LEFT
         : I2S_CHANNEL_FMT_ONLY_RIGHT;
-    i2s_cfg.communication_format = I2S_COMM_FORMAT_I2S;
+    i2s_cfg.communication_format = I2S_COMM_FORMAT_STAND_I2S;
     i2s_cfg.dma_buf_count = 4;
     i2s_cfg.dma_buf_len = 256;
     i2s_cfg.use_apll = false;

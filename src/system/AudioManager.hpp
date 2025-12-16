@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cstdint>
 #include <memory>
 #include <atomic>
 
@@ -8,123 +7,115 @@
 #include "freertos/task.h"
 #include "freertos/ringbuf.h"
 
-#include "system/StateManager.hpp"
 #include "system/StateTypes.hpp"
+#include "system/StateManager.hpp"
 
-// Low-level audio interfaces
-class AudioInput;      // Mic (INMP441)
-class AudioOutput;     // Speaker (MAX98357)
-class AudioCodec;      // ADPCM / Opus (interface)
-
-// Network forward (AudioManager does NOT include NetworkManager.hpp)
-class NetworkManager;
+// Forward declarations
+class AudioInput;
+class AudioOutput;
+class AudioCodec;
 
 /**
  * AudioManager
  * ============================================================================
- * Responsibilities:
- *  - React to InteractionState (LISTENING / SPEAKING / IDLE / SLEEPING)
- *  - Own audio data pipeline
- *  - Manage ring buffers
- *  - Encode / decode audio
- *  - Push / pull data to NetworkManager (binary only)
- *
- * DOES NOT:
- *  - Touch WiFi / WebSocket directly
- *  - Handle UI
- *  - Decide system state
+ * - Quản lý audio state (LISTENING / SPEAKING / IDLE / SLEEPING)
+ * - Điều phối AudioInput / AudioOutput / AudioCodec
+ * - KHÔNG làm network
+ * - Cung cấp ring buffer cho module khác (NetworkManager)
  */
 class AudioManager {
 public:
     AudioManager();
     ~AudioManager();
 
-    // =========================================================================
+    // ------------------------------------------------------------------------
     // Lifecycle
-    // =========================================================================
-    bool init(NetworkManager* net);   // must be called before start()
+    // ------------------------------------------------------------------------
+    bool init();
     void start();
     void stop();
 
-    // =========================================================================
-    // Dependency injection (set BEFORE start)
-    // =========================================================================
+    // ------------------------------------------------------------------------
+    // Dependency injection
+    // ------------------------------------------------------------------------
     void setInput(std::unique_ptr<AudioInput> in);
     void setOutput(std::unique_ptr<AudioOutput> out);
-    void setCodec(std::unique_ptr<AudioCodec> c);
+    void setCodec(std::unique_ptr<AudioCodec> cdc);
 
-    // =========================================================================
-    // State-driven control (called by AppController)
-    // =========================================================================
-    void startListening(state::InputSource src);
-    void pauseListening();
-    void startSpeaking();
-    void stopAll();
+    // ------------------------------------------------------------------------
+    // Ring buffer access (NetworkManager dùng)
+    // ------------------------------------------------------------------------
+    RingbufHandle_t getMicEncodedBuffer() const { return rb_mic_encoded; }
+    RingbufHandle_t getSpeakerEncodedBuffer() const { return rb_spk_encoded; }
+
+    // ------------------------------------------------------------------------
+    // Power / control
+    // ------------------------------------------------------------------------
     void setPowerSaving(bool enable);
 
-    // =========================================================================
-    // Network → Audio (called by NetworkManager)
-    // =========================================================================
-    void onAudioPacketFromServer(const uint8_t* data, size_t len);
+private:
+    // ------------------------------------------------------------------------
+    // State callback
+    // ------------------------------------------------------------------------
+    void handleInteractionState(state::InteractionState s,
+                                state::InputSource src);
+
+    // ------------------------------------------------------------------------
+    // Audio actions
+    // ------------------------------------------------------------------------
+    void startListening(state::InputSource src);
+    void pauseListening();
+    void stopListening();
+
+    void startSpeaking();
+    void stopSpeaking();
+
+    void stopAll();
 
 private:
-    // =========================================================================
-    // Internal state handling
-    // =========================================================================
-    void handleInteractionState(state::InteractionState s);
-
-    // =========================================================================
-    // Audio Tasks
-    // =========================================================================
+    // ------------------------------------------------------------------------
+    // Tasks
+    // ------------------------------------------------------------------------
     static void micTaskEntry(void* arg);
     static void spkTaskEntry(void* arg);
 
-    void micTask();   // Capture → Encode → Send
-    void spkTask();   // Receive → Decode → Play
+    void micTaskLoop();
+    void spkTaskLoop();
 
 private:
-    // =========================================================================
-    // Dependencies
-    // =========================================================================
-    NetworkManager* network = nullptr;
+    // ------------------------------------------------------------------------
+    // State
+    // ------------------------------------------------------------------------
+    std::atomic<bool> started{false};
+    std::atomic<bool> listening{false};
+    std::atomic<bool> speaking{false};
+    std::atomic<bool> power_saving{false};
 
+    state::InputSource current_source = state::InputSource::UNKNOWN;
+
+    // ------------------------------------------------------------------------
+    // Components
+    // ------------------------------------------------------------------------
     std::unique_ptr<AudioInput>  input;
     std::unique_ptr<AudioOutput> output;
     std::unique_ptr<AudioCodec>  codec;
 
-private:
-    // =========================================================================
-    // Ring Buffers
-    // =========================================================================
-    // Mic pipeline
-    RingbufHandle_t rb_mic_pcm      = nullptr;  // int16_t
-    RingbufHandle_t rb_mic_encoded  = nullptr;  // uint8_t
+    // ------------------------------------------------------------------------
+    // Ring buffers
+    // ------------------------------------------------------------------------
+    RingbufHandle_t rb_mic_pcm      = nullptr; // PCM from mic
+    RingbufHandle_t rb_mic_encoded  = nullptr; // encoded uplink
+    RingbufHandle_t rb_spk_encoded  = nullptr; // encoded downlink
+    RingbufHandle_t rb_spk_pcm      = nullptr; // PCM to speaker
 
-    // Speaker pipeline
-    RingbufHandle_t rb_spk_encoded  = nullptr;  // uint8_t
-    RingbufHandle_t rb_spk_pcm      = nullptr;  // int16_t
-
-private:
-    // =========================================================================
+    // ------------------------------------------------------------------------
     // Tasks
-    // =========================================================================
+    // ------------------------------------------------------------------------
     TaskHandle_t mic_task = nullptr;
     TaskHandle_t spk_task = nullptr;
 
-private:
-    // =========================================================================
-    // Runtime flags
-    // =========================================================================
-    std::atomic<bool> started   {false};
-    std::atomic<bool> listening {false};
-    std::atomic<bool> speaking  {false};
-    std::atomic<bool> power_save{false};
-
-    state::InputSource current_source = state::InputSource::UNKNOWN;
-
-private:
-    // =========================================================================
-    // State subscription
-    // =========================================================================
+    // ------------------------------------------------------------------------
+    // StateManager subscription
+    // ------------------------------------------------------------------------
     int sub_interaction_id = -1;
 };

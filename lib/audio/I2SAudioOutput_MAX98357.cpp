@@ -28,7 +28,7 @@ bool I2SAudioOutput_MAX98357::startPlayback()
     i2s_cfg.channel_format = (cfg_.channels == 2)
         ? I2S_CHANNEL_FMT_RIGHT_LEFT
         : I2S_CHANNEL_FMT_ONLY_LEFT;
-    i2s_cfg.communication_format = I2S_COMM_FORMAT_I2S;
+    i2s_cfg.communication_format = I2S_COMM_FORMAT_STAND_I2S;
     i2s_cfg.dma_buf_count = 6;
     i2s_cfg.dma_buf_len = 256;
     i2s_cfg.use_apll = false;
