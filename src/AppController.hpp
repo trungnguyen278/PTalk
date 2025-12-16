@@ -11,6 +11,7 @@
 #include "system/PowerManager.hpp"
 #include "system/NetworkManager.hpp"
 #include "system/AudioManager.hpp"
+#include "../../lib/touch/TouchInput.hpp"
 
 // Optional External Messages / Intent / Commands (Key future extensibility)
 namespace event {
@@ -64,6 +65,13 @@ public:
     // ======= Post application-level event to queue =======
     void postEvent(event::AppEvent evt);
 
+    // ======= Dependency injection =======
+    void attachModules(std::unique_ptr<DisplayManager> displayIn,
+                       std::unique_ptr<AudioManager> audioIn,
+                       std::unique_ptr<NetworkManager> networkIn,
+                       std::unique_ptr<PowerManager> powerIn,
+                       std::unique_ptr<TouchInput> touchIn);
+
 private:
     AppController() = default;
     ~AppController() = default;
@@ -76,8 +84,7 @@ private:
     void processQueue();
 
         // UI Task
-    static void uiTaskEntry(void* param);
-    void uiLoop();
+    // NetworkManager runs its own task; no UI/network tick task here
 
 
     //TODO: thêm các task khác nếu cần

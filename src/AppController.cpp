@@ -1,6 +1,8 @@
 #include "AppController.hpp"
 #include "esp_log.h"
 
+#include <utility>
+
 static const char* TAG = "AppController";
 
 // ===================== Internal message type for queue =====================
@@ -33,6 +35,24 @@ AppController& AppController::instance() {
 
 // ===================== Lifecycle =====================
 
+void AppController::attachModules(std::unique_ptr<DisplayManager> displayIn,
+                                  std::unique_ptr<AudioManager> audioIn,
+                                  std::unique_ptr<NetworkManager> networkIn,
+                                  std::unique_ptr<PowerManager> powerIn,
+                                  std::unique_ptr<TouchInput> touchIn)
+{
+    if (started.load()) {
+        ESP_LOGW(TAG, "attachModules called after start; ignoring");
+        return;
+    }
+
+    display = std::move(displayIn);
+    audio   = std::move(audioIn);
+    network = std::move(networkIn);
+    power   = std::move(powerIn);
+    touch   = std::move(touchIn);
+}
+
 bool AppController::init() {
     ESP_LOGI(TAG, "AppController init()");
 
@@ -44,15 +64,11 @@ bool AppController::init() {
         }
     }
 
-    // TODO: Khởi tạo các module tầng dưới (tuỳ bạn implement)
-    // Ví dụ:
-    network = std::make_unique<NetworkManager>();
-    // audio   = std::make_unique<AudioManager>();
-    display = std::make_unique<DisplayManager>();
-    power   = std::make_unique<PowerManager>();
-    // config  = std::make_unique<ConfigManager>();
-    // ota     = std::make_unique<OTAUpdater>();
-    // touch   = std::make_unique<TouchInput>();
+    if (!display) ESP_LOGW(TAG, "DisplayManager not attached");
+    if (!audio)   ESP_LOGW(TAG, "AudioManager not attached");
+    if (!network) ESP_LOGW(TAG, "NetworkManager not attached");
+    if (!power)   ESP_LOGW(TAG, "PowerManager not attached");
+    if (!touch)   ESP_LOGW(TAG, "TouchInput not attached");
 
     // Subcribes StateManager
     auto& sm = StateManager::instance();
@@ -133,26 +149,7 @@ void AppController::start() {
     }
 
     // ---------------------------------------------------------------------
-    // 2) Start UI task (DisplayManager update loop)
-    // ---------------------------------------------------------------------
-    if (display) {
-        BaseType_t r2 = xTaskCreatePinnedToCore(
-            &AppController::uiTaskEntry,
-            "UI_Task",
-            4096,
-            this,
-            3,      // slightly lower priority than app controller
-            nullptr,
-            1       // core 1
-        );
-
-        if (r2 != pdPASS) {
-            ESP_LOGE(TAG, "Failed to create UI Task");
-        }
-    }
-
-    // ---------------------------------------------------------------------
-    // 3) Start PowerManager (uses FreeRTOS Timer, NO TASK NEEDED)
+    // 2) Start PowerManager trước để theo dõi pin
     // ---------------------------------------------------------------------
     if (power) {
         if (!power->init()) {
@@ -160,6 +157,22 @@ void AppController::start() {
         } else {
             power->start();
         }
+    }
+
+    // ---------------------------------------------------------------------
+    // 3) Start DisplayManager để hiển thị trạng thái portal
+    // ---------------------------------------------------------------------
+    if (display) {
+        if (!display->isLoopRunning() && !display->startLoop(33, 3, 4096, 1)) {
+            ESP_LOGE(TAG, "DisplayManager startLoop failed");
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // 4) Start NetworkManager (captive portal)
+    // ---------------------------------------------------------------------
+    if (network) {
+        network->start();
     }
 
     ESP_LOGI(TAG, "AppController started");
@@ -173,8 +186,12 @@ void AppController::stop() {
         power->stop();   // stop timer
     }
 
+    if (display) {
+        display->stopLoop();
+    }
+
     // controllerTask sẽ tự hủy trong processQueue()
-    // uiTask sẽ tự hủy trong uiLoop()
+    // Net_Task sẽ tự hủy trong uiLoop()
 
     ESP_LOGW(TAG, "AppController stopping...");
 }
@@ -326,30 +343,7 @@ void AppController::processQueue() {
     vTaskDelete(nullptr);
 }
 
-void AppController::uiTaskEntry(void* param) {
-    auto* self = static_cast<AppController*>(param);
-    if (!self) {
-        vTaskDelete(nullptr);
-        return;
-    }
-    self->uiLoop();
-}
-
-void AppController::uiLoop() {
-    ESP_LOGI(TAG, "UI task started");
-
-    const TickType_t delayMs = pdMS_TO_TICKS(33);  // 33ms
-
-    while (started.load()) {
-        if (display) {
-            display->update(33);
-        }
-        vTaskDelay(delayMs);
-    }
-
-    ESP_LOGW(TAG, "UI task stopping");
-    vTaskDelete(nullptr);
-}
+// NetworkManager now owns its own update task
 // ===================== State callbacks logic =====================
 
 // Flow A: auto từ TRIGGERED → LISTENING
