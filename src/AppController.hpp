@@ -108,6 +108,9 @@ public:
                        std::unique_ptr<TouchInput> touchIn,
                        std::unique_ptr<OTAUpdater> otaIn);
 
+    // ======= Module accessors (for testing) =======
+    DisplayManager* getDisplay() const { return display.get(); }
+
 private:
     AppController() = default;
     ~AppController();

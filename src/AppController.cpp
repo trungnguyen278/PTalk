@@ -206,19 +206,19 @@ void AppController::start() {
             power->sampleNow();
             
             // Check if waking from deep sleep due to battery check
-            esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
-            if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER) {
-                ESP_LOGI(TAG, "Woke from deep sleep - checking battery");
-                auto ps = StateManager::instance().getPowerState();
-                if (ps == state::PowerState::CRITICAL || ps == state::PowerState::LOW_BATTERY) {
-                    ESP_LOGW(TAG, "Battery still low/critical - going back to sleep");
-                    vTaskDelay(pdMS_TO_TICKS(1000));
-                    enterSleep();
-                    // Will not reach here
-                } else {
-                    ESP_LOGI(TAG, "Battery recovered to acceptable level - continuing boot");
-                }
-            }
+            // esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
+            // if (wakeup_reason == ESP_SLEEP_WAKEUP_TIMER) {
+            //     ESP_LOGI(TAG, "Woke from deep sleep - checking battery");
+            //     auto ps = StateManager::instance().getPowerState();
+            //     if (ps == state::PowerState::CRITICAL || ps == state::PowerState::LOW_BATTERY) {
+            //         ESP_LOGW(TAG, "Battery still low/critical - going back to sleep");
+            //         vTaskDelay(pdMS_TO_TICKS(1000));
+            //         enterSleep();
+            //         // Will not reach here
+            //     } else {
+            //         ESP_LOGI(TAG, "Battery recovered to acceptable level - continuing boot");
+            //     }
+            // }
         }
     }
 
@@ -314,7 +314,7 @@ void AppController::enterSleep() {
     if (display) {
         // Keep last frame visible briefly; turn off BL just before sleep
         display->stopLoop();
-        // Delay 5000 ms to show last frame
+        // Delay to show last frame
         vTaskDelay(pdMS_TO_TICKS(5000));
         display->setBacklight(false);
     }
@@ -637,7 +637,7 @@ void AppController::onPowerStateChanged(state::PowerState s) {
                 network->stop();
             }
             // ✅ Auto-sleep on critical battery
-            ESP_LOGW(TAG, "Critical battery - entering deep sleep");
+            ESP_LOGW(TAG, "Critical battery detected - entering deep sleep");
             enterSleep();  // Does not return
             break;
         
