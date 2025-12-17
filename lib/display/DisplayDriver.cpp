@@ -40,6 +40,11 @@ DisplayDriver::~DisplayDriver() {
         spi_bus_remove_device(spi_dev);
         spi_dev = nullptr;
     }
+    // Free SPI bus if it was initialized
+    if (initialized) {
+        spi_bus_free(cfg_.spi_host);
+        ESP_LOGD(TAG, "SPI bus freed");
+    }
 }
 
 
@@ -71,13 +76,19 @@ void DisplayDriver::sendData(const uint8_t* data, size_t len)
 
 void DisplayDriver::setAddressWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
 {
+    // Apply panel memory offsets if needed
+    uint16_t xs = x0 + cfg_.x_offset;
+    uint16_t xe = x1 + cfg_.x_offset;
+    uint16_t ys = y0 + cfg_.y_offset;
+    uint16_t ye = y1 + cfg_.y_offset;
+
     uint8_t col_data[4] = {
-        (uint8_t)(x0 >> 8), (uint8_t)(x0 & 0xFF),
-        (uint8_t)(x1 >> 8), (uint8_t)(x1 & 0xFF)
+        (uint8_t)(xs >> 8), (uint8_t)(xs & 0xFF),
+        (uint8_t)(xe >> 8), (uint8_t)(xe & 0xFF)
     };
     uint8_t row_data[4] = {
-        (uint8_t)(y0 >> 8), (uint8_t)(y0 & 0xFF),
-        (uint8_t)(y1 >> 8), (uint8_t)(y1 & 0xFF)
+        (uint8_t)(ys >> 8), (uint8_t)(ys & 0xFF),
+        (uint8_t)(ye >> 8), (uint8_t)(ye & 0xFF)
     };
 
     sendCommand(ST7789_CMD_CASET);
@@ -132,6 +143,7 @@ bool DisplayDriver::init(const Config& cfg)
     devcfg.mode = 0;
     devcfg.spics_io_num = cfg.pin_cs;
     devcfg.queue_size = 7;
+    devcfg.flags = SPI_DEVICE_NO_DUMMY;  // Allow higher speeds without dummy bits
 
     ESP_ERROR_CHECK(spi_bus_add_device(cfg.spi_host, &devcfg, &spi_dev));
 
@@ -172,6 +184,10 @@ bool DisplayDriver::init(const Config& cfg)
     sendCommand(ST7789_CMD_MADCTL);
     sendData(&madctl, 1);
 
+    // Optional: invert colors for bring-up diagnostics
+    // 0x21 = INVON (invert), 0x20 = INVOFF (normal)
+    sendCommand(0x21);
+
     sendCommand(ST7789_CMD_DISPON);
     vTaskDelay(pdMS_TO_TICKS(100));
 
@@ -204,6 +220,8 @@ void DisplayDriver::flush(Framebuffer* fb)
 {
     if (!initialized || !fb) return;
 
+    ESP_LOGD(TAG, "flush() to ST7789 %ux%u (offs %u,%u)", width_, height_, cfg_.x_offset, cfg_.y_offset);
+
     setAddressWindow(0, 0, width_ - 1, height_ - 1);
 
     gpio_set_level((gpio_num_t)cfg_.pin_dc, 1);
@@ -225,20 +243,36 @@ void DisplayDriver::fillScreen(uint16_t color)
     if (!initialized) return;
 
     setAddressWindow(0, 0, width_ - 1, height_ - 1);
-
     gpio_set_level((gpio_num_t)cfg_.pin_dc, 1); // data
 
-    spi_transaction_t t = {};
-    t.length = 16 * 1024 * 8;
-    t.tx_buffer = nullptr;
-
-    uint16_t line_buf[240];
-    for (int i = 0; i < 240; i++) line_buf[i] = color;
-
-    for (uint32_t i = 0; i < height_; i++) {
-        t.tx_buffer = line_buf;
-        ESP_ERROR_CHECK(spi_device_transmit(spi_dev, &t));
+    // Allocate temp buffer
+    size_t buf_size = width_ * height_ * sizeof(uint16_t);
+    uint16_t* fill_buf = (uint16_t*)malloc(buf_size);
+    if (!fill_buf) {
+        ESP_LOGE(TAG, "fillScreen: malloc failed");
+        return;
     }
+
+    // Fill entire buffer at once (not line by line)
+    for (uint32_t i = 0; i < width_ * height_; i++) {
+        fill_buf[i] = color;
+    }
+
+    // Send all pixels in single SPI transaction
+    spi_transaction_t t = {};
+    t.length = width_ * height_ * 16;  // in bits
+    t.tx_buffer = fill_buf;
+    t.user = nullptr;
+    
+    esp_err_t err = spi_device_transmit(spi_dev, &t);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "fillScreen SPI transmit failed: %d", err);
+    }
+    
+    // Small delay to ensure display latches data
+    vTaskDelay(pdMS_TO_TICKS(5));
+    
+    free(fill_buf);
 }
 
 
@@ -277,10 +311,13 @@ void DisplayDriver::drawTextCenter(Framebuffer* fb, const char* text, uint16_t c
 {
     if (!fb || !text) return;
 
+    //ESP_LOGI(TAG, "drawTextCenter called: text='%s' color=0x%04X pos=(%d,%d)", text, color, cx, cy);
+
     int len = strlen(text);
     int text_w = len * 8;
     int x = cx - text_w / 2;
     int y = cy - 4;
 
+    //ESP_LOGI(TAG, "drawTextCenter: drawing at (%d,%d)", x, y);
     fb->drawText8x8(x, y, text, color);
 }

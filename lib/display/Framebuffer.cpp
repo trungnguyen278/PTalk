@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cstring>
 #include "Font8x8.hpp"
+#include "esp_log.h"
 
 
 
@@ -72,6 +73,8 @@ void Framebuffer::drawBitmap(int x, int y, int w, int h, const uint16_t* src)
 {
     if (!pixels_ || !src) return;
     if (w <= 0 || h <= 0) return;
+
+    ESP_LOGD("Framebuffer", "drawBitmap pos=(%d,%d) size=%dx%d", x, y, w, h);
 
     // clip
     int sx = 0, sy = 0;

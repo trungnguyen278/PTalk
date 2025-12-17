@@ -33,6 +33,10 @@ public:
         uint16_t width  = 240;
         uint16_t height = 240;
 
+        // Some ST7789 panels require memory window offsets (e.g., 240x240 in 240x320 RAM)
+        uint16_t x_offset = 0;
+        uint16_t y_offset = 0;
+
         uint32_t spi_speed_hz = 40 * 1000 * 1000; // 40 MHz
     };
 
