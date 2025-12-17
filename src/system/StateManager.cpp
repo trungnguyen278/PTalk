@@ -14,21 +14,26 @@ StateManager& StateManager::instance() {
 // ===========================================================
 
 void StateManager::setInteractionState(state::InteractionState s, state::InputSource src) {
-    std::lock_guard<std::mutex> lk(mtx);
+    std::vector<std::pair<int, InteractionCb>> callbacks;
+    
+    {
+        std::lock_guard<std::mutex> lk(mtx);
 
-    if (s == interaction_state && src == interaction_source) {
-        return;
-    }
+        if (s == interaction_state && src == interaction_source) {
+            return;  // No change
+        }
 
-    interaction_state = s;
-    interaction_source = src;
+        interaction_state = s;
+        interaction_source = src;
 
-    ESP_LOGI(TAG, "InteractionState -> %d (source=%d)",
-        static_cast<int>(s), static_cast<int>(src));
+        ESP_LOGI(TAG, "InteractionState: %d -> %d (source=%d)",
+            static_cast<int>(interaction_state), static_cast<int>(s), static_cast<int>(src));
 
-    // copy callback list
-    auto callbacks = interaction_cbs;
-    // unlock automatically after guard
+        // Copy callbacks under lock
+        callbacks = interaction_cbs;
+    }  // Lock released here
+
+    // ✅ Call callbacks OUTSIDE lock to prevent deadlocks and timer overflow
     for (auto &p : callbacks) {
         if (p.second) p.second(s, src);
     }
@@ -65,13 +70,20 @@ void StateManager::unsubscribeInteraction(int id) {
 // ===========================================================
 
 void StateManager::setConnectivityState(state::ConnectivityState s) {
-    std::lock_guard<std::mutex> lk(mtx);
-    if (s == connectivity_state) return;
+    std::vector<std::pair<int, ConnectivityCb>> callbacks;
+    
+    {
+        std::lock_guard<std::mutex> lk(mtx);
+        if (s == connectivity_state) return;
 
-    connectivity_state = s;
-    ESP_LOGI(TAG, "ConnectivityState -> %d", static_cast<int>(s));
+        connectivity_state = s;
+        ESP_LOGI(TAG, "ConnectivityState: %d (change)", static_cast<int>(s));
 
-    auto callbacks = connectivity_cbs;
+        // Copy callbacks under lock
+        callbacks = connectivity_cbs;
+    }  // Lock released here
+
+    // ✅ Call callbacks OUTSIDE lock to prevent deadlocks
     for (auto &p : callbacks) {
         if (p.second) p.second(s);
     }
@@ -103,13 +115,20 @@ void StateManager::unsubscribeConnectivity(int id) {
 // ===========================================================
 
 void StateManager::setSystemState(state::SystemState s) {
-    std::lock_guard<std::mutex> lk(mtx);
-    if (s == system_state) return;
+    std::vector<std::pair<int, SystemCb>> callbacks;
+    
+    {
+        std::lock_guard<std::mutex> lk(mtx);
+        if (s == system_state) return;
 
-    system_state = s;
-    ESP_LOGI(TAG, "SystemState -> %d", static_cast<int>(s));
+        system_state = s;
+        ESP_LOGI(TAG, "SystemState: %d (change)", static_cast<int>(s));
 
-    auto callbacks = system_cbs;
+        // Copy callbacks under lock
+        callbacks = system_cbs;
+    }  // Lock released here
+
+    // ✅ Call callbacks OUTSIDE lock to prevent deadlocks
     for (auto &p : callbacks) {
         if (p.second) p.second(s);
     }
@@ -141,13 +160,20 @@ void StateManager::unsubscribeSystem(int id) {
 // ===========================================================
 
 void StateManager::setPowerState(state::PowerState s) {
-    std::lock_guard<std::mutex> lk(mtx);
-    if (s == power_state) return;
+    std::vector<std::pair<int, PowerCb>> callbacks;
+    
+    {
+        std::lock_guard<std::mutex> lk(mtx);
+        if (s == power_state) return;
 
-    power_state = s;
-    ESP_LOGI(TAG, "PowerState -> %d", static_cast<int>(s));
+        power_state = s;
+        ESP_LOGI(TAG, "PowerState: %d (change)", static_cast<int>(s));
 
-    auto callbacks = power_cbs;
+        // Copy callbacks under lock
+        callbacks = power_cbs;
+    }  // Lock released here
+
+    // ✅ Call callbacks OUTSIDE lock to prevent deadlocks and timer stack overflow
     for (auto &p : callbacks) {
         if (p.second) p.second(s);
     }

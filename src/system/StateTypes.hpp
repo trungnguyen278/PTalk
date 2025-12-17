@@ -1,57 +1,63 @@
 #pragma once
 #include <cstdint>
 
-namespace state {
+namespace state
+{
 
-// ---------- Interaction (User → Voice UX / Input trigger) ----------
-enum class InteractionState : uint8_t {
-    IDLE,               // ready, nothing active
-    TRIGGERED,          // input detected (VAD, button, wakeword)
-    LISTENING,          // mic capturing + upstream enabled
-    PROCESSING,         // waiting server AI / LLM / ASR / TTS
-    SPEAKING,           // speaker output
-    CANCELLING,         // cancel by user / timeout
-    MUTED,              // input disabled (privacy mode)
-    SLEEPING            // system UX off but alive
-};
+    // ---------- Interaction (User → Voice UX / Input trigger) ----------
+    enum class InteractionState : uint8_t
+    {
+        IDLE,       // ready, nothing active
+        TRIGGERED,  // input detected (VAD, button, wakeword)
+        LISTENING,  // mic capturing + upstream enabled
+        PROCESSING, // waiting server AI / LLM / ASR / TTS
+        SPEAKING,   // speaker output
+        CANCELLING, // cancel by user / timeout
+        MUTED,      // input disabled (privacy mode)
+        SLEEPING    // system UX off but alive
+    };
 
-// ---------- Connectivity (WiFi / Websocket) ----------
-enum class ConnectivityState : uint8_t {
-    OFFLINE,
-    CONNECTING_WIFI,
-    WIFI_PORTAL,
-    CONNECTING_WS,
-    ONLINE
-};
+    // ---------- Connectivity (WiFi / Websocket) ----------
+    enum class ConnectivityState : uint8_t
+    {
+        OFFLINE,         // No network
+        CONNECTING_WIFI, // Trying to connect to WiFi
+        WIFI_PORTAL,     // Captive portal mode
+        CONNECTING_WS,   // Connecting to WebSocket server
+        ONLINE           // Connected and operational
+    };
 
-// ---------- System ----------
-enum class SystemState : uint8_t {
-    BOOTING,
-    RUNNING,
-    ERROR,
-    MAINTENANCE,
-    UPDATING_FIRMWARE,     // OTA state future
-    FACTORY_RESETTING
-};
+    // ---------- System ----------
+    enum class SystemState : uint8_t
+    {
+        BOOTING,
+        RUNNING,
+        ERROR,
+        MAINTENANCE,
+        UPDATING_FIRMWARE, // OTA state future
+        FACTORY_RESETTING
+    };
 
-// ---------- Power ----------
-enum class PowerState : uint8_t {
-    NORMAL,
-    LOW_BATTERY,
-    CHARGING,
-    FULL_BATTERY,
-    POWER_SAVING,          // dim display / disable speaker
-    CRITICAL,               // force shutdown
-    ERROR                   // battery disconnected / fault
-};
+    // ---------- Power ----------
+    enum class PowerState : uint8_t
+    {
+        NORMAL,
+        LOW_BATTERY,
+        CHARGING,
+        FULL_BATTERY,
+        POWER_SAVING, // dim display / disable speaker
+        CRITICAL,     // force shutdown
+        ERROR         // battery disconnected / fault
+    };
 
-// ---------- Input Source (what triggered the interaction) ----------
-enum class InputSource : uint8_t {
-    VAD,                   // Voice Activity Detection
-    BUTTON,                // Physical button
-    WAKEWORD,           // Wakeword detected    
-    SERVER_COMMAND,         // remote trigger
-    UNKNOWN                 // fallback
-};
+    // ---------- Input Source (what triggered the interaction) ----------
+    enum class InputSource : uint8_t
+    {
+        VAD,            // Voice Activity Detection
+        BUTTON,         // Physical button
+        WAKEWORD,       // Wakeword detected
+        SERVER_COMMAND, // remote trigger
+        UNKNOWN         // fallback
+    };
 
 } // namespace state
