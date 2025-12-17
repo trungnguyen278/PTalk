@@ -24,9 +24,14 @@ def ensure_dir(path):
 # ICON (PNG → .hpp)
 # ============================================================
 
-def convert_icon(png_path, out_dir):
+def convert_icon(png_path, out_dir, max_dim=None):
     name = os.path.splitext(os.path.basename(png_path))[0].upper()
     img = Image.open(png_path).convert("RGB")
+
+    if max_dim is not None:
+        # Fit inside max_dim x max_dim, preserve aspect
+        img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+
     w, h = img.size
     pixels = list(img.getdata())
 
@@ -119,7 +124,7 @@ def convert_emotion(gif_path, out_dir, fps=20, loop=True):
 def main():
     if len(sys.argv) < 3:
         print("Usage:")
-        print("  Icon:    python convert_asset.py icon input.png output_dir/")
+        print("  Icon:    python convert_asset.py icon input.png output_dir/ [max_dim]")
         print("  Emotion: python convert_asset.py emotion input.gif output_dir/ [fps] [loop]")
         return
 
@@ -130,7 +135,8 @@ def main():
     ensure_dir(output_dir)
 
     if mode == "icon":
-        convert_icon(input_path, output_dir)
+        max_dim = int(sys.argv[4]) if len(sys.argv) >= 5 else None
+        convert_icon(input_path, output_dir, max_dim)
 
     elif mode == "emotion":
         fps = int(sys.argv[4]) if len(sys.argv) >= 5 else 20
