@@ -1,18 +1,15 @@
 #pragma once
 
 /**
- * DeviceProfile
- * ------------------------------------------------------------------
- * Nhiệm vụ:
- *  - Cấu hình phần cứng (pin, i2s, adc, display)
- *  - Khởi tạo & wiring các module
- *  - Register assets (emotion / icon)
- *  - Gắn callback giữa module với AppController
- *
- * KHÔNG:
- *  - Không xử lý logic state
- *  - Không đọc/ghi NVS
- *  - Không có task loop
+ * Class:   DeviceProfile
+ * Author:  Trung Nguyen
+ * Email:
+ * Date:    17 Dec 2025
+ * 
+ * Description:
+ *  - Cấu hình thiết bị cụ thể trước khi khởi động ứng dụng
+ *  - Thiết lập các tham số phần cứng, khởi tạo module
+ *  - Được gọi từ AppController trước khi start()
  */
 
 class AppController;

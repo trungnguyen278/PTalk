@@ -43,6 +43,35 @@
 
 static const char *TAG = "DeviceProfile";
 
+// Centralized hardware/config values for easy tweaking
+namespace device_cfg
+{
+    struct PowerPins
+    {
+        adc1_channel_t adc_channel = ADC1_CHANNEL_5; // Battery sense ADC channel (default GPIO33)
+        gpio_num_t pin_chg = GPIO_NUM_NC;            // Optional charge detect pin (active level depends on HW)
+        gpio_num_t pin_full = GPIO_NUM_NC;           // Optional full-battery pin (active level depends on HW)
+        float r1_ohm = 10000.0f;                     // Resistor divider R1 (top, to battery)
+        float r2_ohm = 20000.0f;                     // Resistor divider R2 (bottom, to GND)
+    };
+
+    constexpr PowerPins power{};
+
+    struct DisplayPins
+    {
+        spi_host_device_t spi_host = SPI2_HOST;   // SPI host (SPI2_HOST or SPI3_HOST)
+        gpio_num_t pin_mosi = GPIO_NUM_21;        // MOSI (SDA in some boards)
+        gpio_num_t pin_sclk = GPIO_NUM_23;        // SCLK (Clock)
+        gpio_num_t pin_cs = GPIO_NUM_5;           // Chip Select
+        gpio_num_t pin_dc = GPIO_NUM_18;          // Data/Command
+        gpio_num_t pin_rst = GPIO_NUM_19;         // Reset
+        gpio_num_t pin_bl = GPIO_NUM_27;          // Backlight
+        uint32_t spi_speed_hz = 40 * 1000 * 1000; // SPI clock speed (40 MHz)
+    };
+
+    constexpr DisplayPins display{};
+}
+
 bool DeviceProfile::setup(AppController &app)
 {
     ESP_LOGI(TAG, "DeviceProfile setup begin");
@@ -54,12 +83,12 @@ bool DeviceProfile::setup(AppController &app)
 
     // --- Display driver config (ST7789 240x240) ---
     DisplayDriver::Config lcd_cfg{
-        .spi_host = SPI2_HOST,
-        .pin_cs = GPIO_NUM_5,
-        .pin_dc = GPIO_NUM_16,
-        .pin_rst = GPIO_NUM_17,
-        .pin_bl = GPIO_NUM_4,
-        .spi_speed_hz = 40 * 1000 * 1000};
+        .spi_host = device_cfg::display.spi_host,
+        .pin_cs = device_cfg::display.pin_cs,
+        .pin_dc = device_cfg::display.pin_dc,
+        .pin_rst = device_cfg::display.pin_rst,
+        .pin_bl = device_cfg::display.pin_bl,
+        .spi_speed_hz = device_cfg::display.spi_speed_hz};
 
     auto lcd_driver = std::make_unique<DisplayDriver>();
 
@@ -147,7 +176,16 @@ bool DeviceProfile::setup(AppController &app)
     // =========================================================
     auto network = std::make_unique<NetworkManager>();
 
-    if (!network->init())
+    // Configure captive portal and WebSocket server endpoint here
+    NetworkManager::Config net_cfg{};
+    net_cfg.ap_ssid = "PTalk-Portal"; // SSID hiển thị khi mở portal
+    net_cfg.ap_max_clients = 4;       // Số thiết bị tối đa kết nối vào portal
+
+    // Đặt địa chỉ IP và port của WebSocket server (ví dụ: 192.168.1.100:8080)
+    // Có thể thêm path nếu server yêu cầu, ví dụ: ws://192.168.1.100:8080/ws
+    net_cfg.ws_url = "ws://192.168.1.100:8080";
+
+    if (!network->init(net_cfg))
     {
         ESP_LOGE(TAG, "NetworkManager init failed");
         return false;
@@ -189,10 +227,27 @@ bool DeviceProfile::setup(AppController &app)
     // =========================================================
     // 5️⃣ POWER
     // =========================================================
+    // Centralize power/deep-sleep thresholds here for easy tuning
     PowerManager::Config power_cfg{};
-    // ADC1_CHANNEL_5 (GPIO33) as default battery sense; adjust to your wiring
-    auto power_driver = std::make_unique<Power>(ADC1_CHANNEL_5, GPIO_NUM_NC, GPIO_NUM_NC);
+    power_cfg.evaluate_interval_ms = 2000; // sample every 2s
+    power_cfg.low_battery_percent = 20.0f;
+    power_cfg.critical_percent = 8.0f;
+    power_cfg.enable_smoothing = true;
+    power_cfg.smoothing_alpha = 0.15f;
+
+    // Battery sensing hardware (divider + optional charge/full pins)
+    auto power_driver = std::make_unique<Power>(
+        device_cfg::power.adc_channel,
+        device_cfg::power.pin_chg,  // set to GPIO pin if hardware provides charge indicator
+        device_cfg::power.pin_full, // set to GPIO pin if hardware provides full indicator
+        device_cfg::power.r1_ohm,
+        device_cfg::power.r2_ohm);
+
     auto power = std::make_unique<PowerManager>(std::move(power_driver), power_cfg);
+
+    // App-level power behavior (deep sleep re-check interval)
+    AppController::Config app_cfg{};
+    app_cfg.deep_sleep_wakeup_sec = 30; // wake every 30s to re-check battery
 
     // =========================================================
     // 6️⃣ CREATE OTA UPDATER
@@ -209,6 +264,9 @@ bool DeviceProfile::setup(AppController &app)
         std::move(power),
         std::move(touch),
         std::move(ota));
+
+    // Apply app-level configuration (deep sleep interval, etc.)
+    app.setConfig(app_cfg);
 
     ESP_LOGI(TAG, "DeviceProfile setup OK");
     return true;
