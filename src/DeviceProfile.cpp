@@ -30,6 +30,7 @@
 // #include "assets/icons/battery_low.hpp"
 // #include "assets/icons/battery_charge.hpp"
 // #include "assets/icons/battery_full.hpp"
+#include "assets/icons/critical_power.hpp"
 //
 // #include "assets/emotions/idle.hpp"
 // #include "assets/emotions/listening.hpp"
@@ -66,7 +67,7 @@ namespace device_cfg
         gpio_num_t pin_dc = GPIO_NUM_18;          // Data/Command
         gpio_num_t pin_rst = GPIO_NUM_19;         // Reset
         gpio_num_t pin_bl = GPIO_NUM_27;          // Backlight
-        uint32_t spi_speed_hz = 40 * 1000 * 1000; // SPI clock speed (40 MHz)
+        uint32_t spi_speed_hz = 40 * 1000 * 1000; // SPI clock speed (40 MHz with NO_DUMMY)
     };
 
     constexpr DisplayPins display{};
@@ -88,6 +89,12 @@ bool DeviceProfile::setup(AppController &app)
         .pin_dc = device_cfg::display.pin_dc,
         .pin_rst = device_cfg::display.pin_rst,
         .pin_bl = device_cfg::display.pin_bl,
+        .pin_mosi = device_cfg::display.pin_mosi,
+        .pin_sclk = device_cfg::display.pin_sclk,
+
+        // Try Y offset 80 for panels with 240x240 active area in 240x320 memory
+        .x_offset = 0,
+        .y_offset = 80, // Map 240x240 window into 240x320 GRAM (common ST7789)
         .spi_speed_hz = device_cfg::display.spi_speed_hz};
 
     auto lcd_driver = std::make_unique<DisplayDriver>();
@@ -129,6 +136,12 @@ bool DeviceProfile::setup(AppController &app)
     // display->registerIcon("battery_low",     asset::icon::BATTERY_LOW);
     // display->registerIcon("battery_charge",  asset::icon::BATTERY_CHARGE);
     // display->registerIcon("battery_full",    asset::icon::BATTERY_FULL);
+    display->registerIcon(
+        "battery_critical",
+        DisplayManager::Icon{
+            asset::icon::CRITICAL_POWER.w,
+            asset::icon::CRITICAL_POWER.h,
+            asset::icon::CRITICAL_POWER.rgb});
 
     // =========================================================
     // 2️⃣ AUDIO
@@ -138,9 +151,9 @@ bool DeviceProfile::setup(AppController &app)
     // --- Mic: INMP441 ---
     I2SAudioInput_INMP441::Config mic_cfg{
         .i2s_port = I2S_NUM_0,
-        .pin_bck = GPIO_NUM_26,
-        .pin_ws = GPIO_NUM_25,
-        .pin_din = GPIO_NUM_33,
+        .pin_bck = GPIO_NUM_14, // I2S_MIC_SERIAL_CLOCK
+        .pin_ws = GPIO_NUM_15,  // I2S_MIC_WORD_SELECT
+        .pin_din = GPIO_NUM_32, // I2S_MIC_SERIAL_DATA
         .sample_rate = 16000};
 
     auto mic = std::make_unique<I2SAudioInput_INMP441>(mic_cfg);
@@ -148,9 +161,9 @@ bool DeviceProfile::setup(AppController &app)
     // --- Speaker: MAX98357 ---
     I2SAudioOutput_MAX98357::Config spk_cfg{
         .i2s_port = I2S_NUM_1,
-        .pin_bck = GPIO_NUM_14,
-        .pin_ws = GPIO_NUM_27,
-        .pin_dout = GPIO_NUM_32,
+        .pin_bck = GPIO_NUM_26,  // I2S_SPEAKER_SERIAL_CLOCK
+        .pin_ws = GPIO_NUM_25,   // I2S_SPEAKER_WORD_SELECT
+        .pin_dout = GPIO_NUM_22, // I2S_SPEAKER_SERIAL_DATA
         .sample_rate = 16000};
 
     auto speaker = std::make_unique<I2SAudioOutput_MAX98357>(spk_cfg);
@@ -230,10 +243,10 @@ bool DeviceProfile::setup(AppController &app)
     // Centralize power/deep-sleep thresholds here for easy tuning
     PowerManager::Config power_cfg{};
     power_cfg.evaluate_interval_ms = 2000; // sample every 2s
-    power_cfg.low_battery_percent = 20.0f;
-    power_cfg.critical_percent = 8.0f;
-    power_cfg.enable_smoothing = true;
-    power_cfg.smoothing_alpha = 0.15f;
+    power_cfg.low_battery_percent = 15.0f; // low battery warning at 15%
+    power_cfg.critical_percent = 5.0f;      // critical battery (auto sleep) at 5%
+    power_cfg.enable_smoothing = true;      // enable smoothing filter
+    power_cfg.smoothing_alpha = 0.15f;      // smoothing factor alpha
 
     // Battery sensing hardware (divider + optional charge/full pins)
     auto power_driver = std::make_unique<Power>(
@@ -247,7 +260,7 @@ bool DeviceProfile::setup(AppController &app)
 
     // App-level power behavior (deep sleep re-check interval)
     AppController::Config app_cfg{};
-    app_cfg.deep_sleep_wakeup_sec = 30; // wake every 30s to re-check battery
+    app_cfg.deep_sleep_wakeup_sec = 60; // wake every 60s to re-check battery
 
     // =========================================================
     // 6️⃣ CREATE OTA UPDATER
