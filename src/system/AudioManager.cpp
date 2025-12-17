@@ -123,15 +123,26 @@ void AudioManager::stop()
 
     stopAll();
 
-    if (mic_task) {
-        vTaskDelete(mic_task);
-        mic_task = nullptr;
-    }
+    // ✅ Allow tasks to exit themselves (they check `started` and self-delete)
+    // Wait up to 1s for both tasks to terminate; then force delete as fallback.
+    const uint32_t TIMEOUT_MS = 1000;
+    uint32_t waited = 0;
 
-    if (spk_task) {
-        vTaskDelete(spk_task);
-        spk_task = nullptr;
-    }
+    auto waitForExit = [&](TaskHandle_t &th) {
+        if (!th) return;
+        while (eTaskGetState(th) != eDeleted && waited < TIMEOUT_MS) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            waited += 10;
+        }
+        if (eTaskGetState(th) != eDeleted) {
+            ESP_LOGW(TAG, "Audio task did not exit; force deleting");
+            vTaskDelete(th);
+        }
+        th = nullptr;
+    };
+
+    waitForExit(mic_task);
+    waitForExit(spk_task);
 }
 
 // ============================================================================
