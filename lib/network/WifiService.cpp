@@ -219,6 +219,12 @@ void WifiService::init()
     ESP_ERROR_CHECK(esp_wifi_set_storage(WIFI_STORAGE_RAM));
     ESP_ERROR_CHECK(esp_wifi_start());
 
+    // Disable power save to reduce beacon timeout disconnects during streaming
+    ESP_ERROR_CHECK(esp_wifi_set_ps(WIFI_PS_NONE));
+    
+    // Reduce WiFi log spam (channel switch, beacon timeout details)
+    esp_log_level_set("wifi", ESP_LOG_WARN);
+
     registerEvents();
     loadCredentials();
 }
