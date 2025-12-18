@@ -5,7 +5,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/ringbuf.h"
+#include "freertos/stream_buffer.h"
 
 #include "system/StateTypes.hpp"
 #include "system/StateManager.hpp"
@@ -43,10 +43,10 @@ public:
     void setCodec(std::unique_ptr<AudioCodec> cdc);
 
     // ------------------------------------------------------------------------
-    // Ring buffer access (NetworkManager dùng)
+    // Stream buffer access (NetworkManager dùng)
     // ------------------------------------------------------------------------
-    RingbufHandle_t getMicEncodedBuffer() const { return rb_mic_encoded; }
-    RingbufHandle_t getSpeakerEncodedBuffer() const { return rb_spk_encoded; }
+    StreamBufferHandle_t getMicEncodedBuffer() const { return sb_mic_encoded; }
+    StreamBufferHandle_t getSpeakerEncodedBuffer() const { return sb_spk_encoded; }
 
     // ------------------------------------------------------------------------
     // Power / control
@@ -77,9 +77,11 @@ private:
     // Tasks
     // ------------------------------------------------------------------------
     static void micTaskEntry(void* arg);
+    static void codecTaskEntry(void* arg);
     static void spkTaskEntry(void* arg);
 
     void micTaskLoop();
+    void codecTaskLoop();
     void spkTaskLoop();
 
 private:
@@ -90,6 +92,7 @@ private:
     std::atomic<bool> listening{false};
     std::atomic<bool> speaking{false};
     std::atomic<bool> power_saving{false};
+    std::atomic<bool> spk_playing{false};
 
     state::InputSource current_source = state::InputSource::UNKNOWN;
 
@@ -101,17 +104,21 @@ private:
     std::unique_ptr<AudioCodec>  codec;
 
     // ------------------------------------------------------------------------
-    // Ring buffers
+    // Stream buffers (FreeRTOS - thread-safe, no race conditions)
     // ------------------------------------------------------------------------
-    RingbufHandle_t rb_mic_pcm      = nullptr; // PCM from mic
-    RingbufHandle_t rb_mic_encoded  = nullptr; // encoded uplink
-    RingbufHandle_t rb_spk_encoded  = nullptr; // encoded downlink
-    RingbufHandle_t rb_spk_pcm      = nullptr; // PCM to speaker
+    StreamBufferHandle_t sb_mic_pcm;      // PCM from mic
+    StreamBufferHandle_t sb_mic_encoded;  // encoded uplink
+    StreamBufferHandle_t sb_spk_pcm;      // PCM to speaker
+    StreamBufferHandle_t sb_spk_encoded;  // encoded downlink
+    
+    // PCM decode buffer (static allocation to avoid heap alloc in task)
+    int16_t spk_pcm_buffer[4096] = {};
 
     // ------------------------------------------------------------------------
     // Tasks
     // ------------------------------------------------------------------------
     TaskHandle_t mic_task = nullptr;
+    TaskHandle_t codec_task = nullptr;
     TaskHandle_t spk_task = nullptr;
 
     // ------------------------------------------------------------------------

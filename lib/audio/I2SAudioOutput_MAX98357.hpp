@@ -51,5 +51,6 @@ private:
     Config cfg_;
 
     bool running = false;
-    uint8_t volume = 100;  // Default 100% to avoid clipping // logical volume (0–100)
+    bool i2s_installed = false;
+    uint8_t volume = 10;  // 10% volume
 };

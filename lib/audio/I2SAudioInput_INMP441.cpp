@@ -29,8 +29,8 @@ bool I2SAudioInput_INMP441::startCapture()
         ? I2S_CHANNEL_FMT_ONLY_LEFT
         : I2S_CHANNEL_FMT_ONLY_RIGHT;
     i2s_cfg.communication_format = I2S_COMM_FORMAT_STAND_I2S;
-    i2s_cfg.dma_buf_count = 4;
-    i2s_cfg.dma_buf_len = 256;
+    i2s_cfg.dma_buf_count = 3;
+    i2s_cfg.dma_buf_len = 256;  // Small buffer to leave room for speaker DMA
     i2s_cfg.use_apll = false;
     i2s_cfg.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
 
@@ -40,9 +40,20 @@ bool I2SAudioInput_INMP441::startCapture()
     pin_cfg.data_in_num = cfg_.pin_din;
     pin_cfg.data_out_num = I2S_PIN_NO_CHANGE;
 
-    ESP_ERROR_CHECK(i2s_driver_install(cfg_.i2s_port, &i2s_cfg, 0, nullptr));
-    ESP_ERROR_CHECK(i2s_set_pin(cfg_.i2s_port, &pin_cfg));
-    ESP_ERROR_CHECK(i2s_zero_dma_buffer(cfg_.i2s_port));
+    esp_err_t err = i2s_driver_install(cfg_.i2s_port, &i2s_cfg, 0, nullptr);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "I2S driver install failed: %s", esp_err_to_name(err));
+        return false;
+    }
+    
+    err = i2s_set_pin(cfg_.i2s_port, &pin_cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "I2S set pin failed: %s", esp_err_to_name(err));
+        i2s_driver_uninstall(cfg_.i2s_port);
+        return false;
+    }
+    
+    i2s_zero_dma_buffer(cfg_.i2s_port);
 
     running = true;
     ESP_LOGI(TAG, "INMP441 capture started");
