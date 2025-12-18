@@ -77,22 +77,22 @@ const char {header_name.replace('.HPP', '')}_DATA[] =
 
 if __name__ == '__main__':
     base_path = os.path.dirname(os.path.abspath(__file__))
-    lib_path = os.path.join(base_path, 'lib', 'network')
+    logos_path = os.path.join(base_path, 'src', 'assets', 'logos')
     
     print("🎨 Logo Converter - PNG → JPEG base64 data URI\n")
     
     # Convert logos
     success = True
     success &= convert_logo(
-        os.path.join(lib_path, 'logo1.png'),
-        os.path.join(lib_path, 'logo1.hpp'),
+        os.path.join(logos_path, 'logo1.png'),
+        os.path.join(logos_path, 'logo1.hpp'),
         size=100,
         quality=70
     )
     print()
     success &= convert_logo(
-        os.path.join(lib_path, 'logo2.png'),
-        os.path.join(lib_path, 'logo2.hpp'),
+        os.path.join(logos_path, 'logo2.png'),
+        os.path.join(logos_path, 'logo2.hpp'),
         size=100,
         quality=70
     )
