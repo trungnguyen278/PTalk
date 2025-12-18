@@ -25,9 +25,9 @@
 #include "AdpcmCodec.hpp"
 
 // ===== Assets =====
-// Uncomment sau khi convert assets bằng convert_assets.py
-// Ví dụ: python convert_assets.py icon wifi_ok.png src/assets/icons/
-//        python convert_assets.py emotion happy.gif src/assets/emotions/ 20 true
+// Uncomment sau khi convert assets bằng scripts/convert_assets.py
+// Ví dụ: python scripts/convert_assets.py icon wifi_ok.png src/assets/icons/
+//        python scripts/convert_assets.py emotion happy.gif src/assets/emotions/ 20 true
 //
 // #include "assets/icons/wifi_ok.hpp"
 // #include "assets/icons/wifi_fail.hpp"
@@ -213,14 +213,15 @@ bool DeviceProfile::setup(AppController &app)
     // --- Network → Audio wiring ---
     // Push incoming binary (ADPCM) from WS into speaker ringbuffer
     // and drive InteractionState to SPEAKING while audio is arriving.
-    SimpleRingBuffer* spk_rb = audio->getSpeakerEncodedBuffer();
-    AudioManager* audio_ptr = audio.get();  // Capture pointer for disconnect handler
-    NetworkManager* network_ptr = network.get();  // For session flag access
-    
-    network->onServerBinary([spk_rb, network_ptr](const uint8_t* data, size_t len) {
+    StreamBufferHandle_t spk_sb = audio->getSpeakerEncodedBuffer();
+    AudioManager *audio_ptr = audio.get();       // Capture pointer for disconnect handler
+    NetworkManager *network_ptr = network.get(); // For session flag access
+
+    network->onServerBinary([spk_sb, network_ptr](const uint8_t *data, size_t len)
+                            {
         if (!data || len == 0) return;
         // Feed encoded data to AudioManager's downlink buffer
-        size_t written = spk_rb->write(data, len, pdMS_TO_TICKS(100));
+        size_t written = xStreamBufferSend(spk_sb, data, len, pdMS_TO_TICKS(100));
         if (written != len) {
             static uint32_t drop_count = 0;
             if (++drop_count % 10 == 0) {
@@ -234,28 +235,28 @@ bool DeviceProfile::setup(AppController &app)
             auto& sm = StateManager::instance();
             sm.setInteractionState(state::InteractionState::SPEAKING,
                                    state::InputSource::SERVER_COMMAND);
-        }
-    });
-    
+        } });
+
     // Handle WS disconnect - must cleanup to unblock speaker task
-    network->onDisconnect([spk_rb, audio_ptr]() {
+    network->onDisconnect([spk_sb, audio_ptr]()
+                          {
         auto& sm = StateManager::instance();
         auto current_state = sm.getInteractionState();
         
         ESP_LOGW("DeviceProfile", "WS disconnected - cleanup audio state");
         
         // Flush buffer to wake speaker task from blocking read
-        spk_rb->flush();
+        xStreamBufferReset(spk_sb);
         
         // Stop speaking to set speaking=false and unblock task
         if (current_state == state::InteractionState::SPEAKING) {
             sm.setInteractionState(state::InteractionState::IDLE,
                                    state::InputSource::SYSTEM);
-        }
-    });
+        } });
 
     // Optionally react to simple text control messages from server
-    network->onServerText([network_ptr](const std::string& msg) {
+    network->onServerText([network_ptr](const std::string &msg)
+                          {
         auto& sm = StateManager::instance();
         if (msg == "PROCESSING_START" || msg == "PROCESSING") {
             sm.setInteractionState(state::InteractionState::PROCESSING,
@@ -271,24 +272,23 @@ bool DeviceProfile::setup(AppController &app)
             network_ptr->endSpeakingSession();
             sm.setInteractionState(state::InteractionState::IDLE,
                                    state::InputSource::SERVER_COMMAND);
-        }
-    });
+        } });
 
     // =========================================================
     // STATE OBSERVER: Control WS immune mode during SPEAKING
     // =========================================================
     // During audio streaming, prevent WS from closing on WiFi fluctuations
     // (use network_ptr already declared above)
-    auto& sm = StateManager::instance();
-    sm.subscribeInteraction([network_ptr](state::InteractionState new_state, state::InputSource src) {
+    auto &sm = StateManager::instance();
+    sm.subscribeInteraction([network_ptr](state::InteractionState new_state, state::InputSource src)
+                            {
         if (new_state == state::InteractionState::SPEAKING) {
             // Enable immune mode - WS must survive WiFi roaming/power save transitions
             network_ptr->setWSImmuneMode(true);
         } else {
             // Disable immune mode when not speaking
             network_ptr->setWSImmuneMode(false);
-        }
-    });
+        } });
 
     // =========================================================
     // 4️⃣ TOUCH INPUT
@@ -322,9 +322,9 @@ bool DeviceProfile::setup(AppController &app)
     PowerManager::Config power_cfg{};
     power_cfg.evaluate_interval_ms = 2000; // sample every 2s
     power_cfg.low_battery_percent = 15.0f; // low battery warning at 15%
-    power_cfg.critical_percent = 5.0f;      // critical battery (auto sleep) at 5%
-    power_cfg.enable_smoothing = true;      // enable smoothing filter
-    power_cfg.smoothing_alpha = 0.15f;      // smoothing factor alpha
+    power_cfg.critical_percent = 5.0f;     // critical battery (auto sleep) at 5%
+    power_cfg.enable_smoothing = true;     // enable smoothing filter
+    power_cfg.smoothing_alpha = 0.15f;     // smoothing factor alpha
 
     // Battery sensing hardware (divider + optional charge/full pins)
     auto power_driver = std::make_unique<Power>(
