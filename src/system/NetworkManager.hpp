@@ -124,6 +124,14 @@ public:
     // Control captive portal explicitly
     void stopPortal();
 
+    // ======================================================
+    // Emotion code parsing (from WebSocket messages)
+    // ======================================================
+    /// Parse emotion code from WebSocket message
+    /// @param code 2-character emotion code ("01", "11", etc.)
+    /// @return EmotionState, or NEUTRAL if code not recognized
+    static state::EmotionState parseEmotionCode(const std::string& code);
+
 private:
     // ======================================================
     // Internal handlers
@@ -134,7 +142,6 @@ private:
     // Retry logic for initial WiFi connection
     void retryWifiThenPortal();
     static void retryWifiTaskEntry(void* arg);
-    
 
     // Receive message from WebSocketClient
     void handleWsTextMessage(const std::string& msg);

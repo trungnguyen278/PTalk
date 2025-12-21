@@ -378,6 +378,15 @@ void NetworkManager::handleWsStatus(int status)
 void NetworkManager::handleWsTextMessage(const std::string& msg)
 {
     ESP_LOGI(TAG, "WS Text Message: %s", msg.c_str());
+    
+    // Try parsing emotion code if message is simple 2-char format
+    if (msg.length() == 2) {
+        auto emotion = parseEmotionCode(msg);
+        StateManager::instance().setEmotionState(emotion);
+        ESP_LOGI(TAG, "Emotion code: %s → %d", msg.c_str(), (int)emotion);
+        // Don't return - still call on_text_cb for logging/debugging
+    }
+    
     if (on_text_cb) on_text_cb(msg);
 }
 
@@ -505,5 +514,42 @@ void NetworkManager::retryWifiThenPortal()
     }
     
     wifi_retry_task = nullptr;
+}
+
+// ============================================================================
+// EMOTION CODE PARSING
+// ============================================================================
+state::EmotionState NetworkManager::parseEmotionCode(const std::string& code)
+{
+    // Map WebSocket emotion codes to EmotionState
+    // Format expected: "01", "11", etc. (2-char codes)
+    
+    if (code == "00" || code.empty()) {
+        return state::EmotionState::NEUTRAL;
+    }
+    if (code == "01") {
+        return state::EmotionState::HAPPY;      // Happy, cheerful
+    }
+    if (code == "02") {
+        return state::EmotionState::ANGRY;      // Angry, urgent
+    }
+    if (code == "03") {
+        return state::EmotionState::EXCITED;    // Excited, enthusiastic
+    }
+    if (code == "11") {
+        return state::EmotionState::SAD;        // Sad, empathetic
+    }
+    if (code == "12") {
+        return state::EmotionState::CONFUSED;   // Confused, uncertain
+    }
+    if (code == "13") {
+        return state::EmotionState::CALM;       // Calm, soothing
+    }
+    if (code == "99") {
+        return state::EmotionState::THINKING;   // Thinking, processing
+    }
+    
+    ESP_LOGW(TAG, "Unknown emotion code: %s", code.c_str());
+    return state::EmotionState::NEUTRAL;
 }
 
