@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 import os
 import argparse
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 from PIL import Image, ImageSequence
+import io
 
 #How to use
 # To convert a PNG icon:
@@ -21,8 +22,7 @@ def rgb888_to_rgb565(r, g, b):
 def write_header_guard(f):
     f.write("#pragma once\n")
     f.write("#include <cstdint>\n")
-    f.write("#include <vector>\n")
-    f.write("#include \"AnimationPlayer.hpp\"\n\n")
+    f.write("#include \"emotion_types.hpp\"\n\n")
 
 def ensure_dir(path):
     if not os.path.exists(path):
@@ -62,98 +62,211 @@ def resize_with_aspect(
     return resized, w, h
 
 # ============================================================
-# ICON (PNG → .hpp)
+# ICON (PNG → .hpp as JPEG grayscale)
 # ============================================================
 
 def convert_icon(png_path, out_dir, target_w=None, target_h=None, max_dim=None):
     name = os.path.splitext(os.path.basename(png_path))[0].upper()
-    img = Image.open(png_path).convert("RGB")
+    img = Image.open(png_path).convert("L")  # Grayscale
 
     img, w, h = resize_with_aspect(img, target_w, target_h, max_dim)
-    pixels = list(img.getdata())
+
+    # Convert to JPEG bytes (grayscale)
+    jpeg_buffer = io.BytesIO()
+    img.save(jpeg_buffer, format="JPEG", quality=90, optimize=True)
+    jpeg_data = jpeg_buffer.getvalue()
 
     out_path = os.path.join(out_dir, f"{name.lower()}.hpp")
     with open(out_path, "w", encoding="utf-8") as f:
         write_header_guard(f)
         f.write(f"namespace asset::icon {{\n\n")
 
-        # Raw pixel data
-        f.write(f"static const uint16_t {name}_DATA[{w*h}] = {{\n")
-        for i, (r, g, b) in enumerate(pixels):
-            val = rgb888_to_rgb565(r, g, b)
-            f.write(f"0x{val:04X}, ")
-            if (i + 1) % 12 == 0:
+        # JPEG data
+        f.write(f"const uint8_t {name}_DATA[{len(jpeg_data)}] = {{\n")
+        for i, byte in enumerate(jpeg_data):
+            f.write(f"0x{byte:02X},")
+            if (i + 1) % 16 == 0:
                 f.write("\n")
         f.write("\n};\n\n")
 
-        # Icon object ready to use
-        f.write(f"// Icon object ready for DisplayManager::registerIcon()\n")
-        f.write(f"static const struct {{\n")
-        f.write(f"    int w = {w};\n")
-        f.write(f"    int h = {h};\n")
-        f.write(f"    const uint16_t* rgb = {name}_DATA;\n")
-        f.write(f"}} {name};\n\n")
+        # Icon metadata
+        f.write(f"// Icon: {w}x{h}, {len(jpeg_data)} bytes JPEG\n")
+        f.write(f"struct Icon_{name} {{\n")
+        f.write(f"    static constexpr int width = {w};\n")
+        f.write(f"    static constexpr int height = {h};\n")
+        f.write(f"    static constexpr int data_size = {len(jpeg_data)};\n")
+        f.write(f"    static const uint8_t* data() {{ return {name}_DATA; }}\n")
+        f.write(f"}};\n\n")
 
         f.write("} // namespace asset::icon\n")
 
-    print(f"[ICON] Generated: {out_path}")
+    print(f"[ICON] {out_path} → {w}x{h}, {len(jpeg_data)} bytes")
 
 # ============================================================
-# EMOTION (GIF → .hpp)
+# EMOTION (GIF → 1-bit with diff encoding)
 # ============================================================
+
+def to_1bit_pixels(img: Image.Image, threshold=128) -> List[int]:
+    """Convert grayscale image to 1-bit per pixel (white=1, black=0)."""
+    pixels = list(img.getdata())
+    return [1 if p >= threshold else 0 for p in pixels]
+
+def compute_pixel_diff(prev_pixels: List[int], curr_pixels: List[int], w: int, h: int) -> List[dict]:
+    """Compute rectangular diff blocks between two 1-bit frames.
+    Returns: list of {x, y, width, height, data} dicts for changed regions
+    """
+    # Find all changed pixels
+    changed_coords = []
+    for i, (p, c) in enumerate(zip(prev_pixels, curr_pixels)):
+        if p != c:
+            x = i % w
+            y = i // w
+            changed_coords.append((x, y, c))
+    
+    if not changed_coords:
+        return []
+    
+    # Find bounding box of all changes
+    min_x = min(x for x, y, c in changed_coords)
+    max_x = max(x for x, y, c in changed_coords)
+    min_y = min(y for x, y, c in changed_coords)
+    max_y = max(y for x, y, c in changed_coords)
+    
+    box_w = max_x - min_x + 1
+    box_h = max_y - min_y + 1
+    
+    # Extract pixels in bounding box from current frame
+    box_pixels = []
+    for by in range(box_h):
+        for bx in range(box_w):
+            px = min_x + bx
+            py = min_y + by
+            idx = py * w + px
+            box_pixels.append(curr_pixels[idx])
+    
+    # Pack into bytes (8 pixels per byte)
+    packed = []
+    for i in range(0, len(box_pixels), 8):
+        byte = 0
+        for j in range(8):
+            if i + j < len(box_pixels) and box_pixels[i + j]:
+                byte |= (1 << (7 - j))
+        packed.append(byte)
+    
+    return [{
+        'x': min_x,
+        'y': min_y,
+        'width': box_w,
+        'height': box_h,
+        'data': packed
+    }]
 
 def convert_emotion(gif_path, out_dir, target_w=None, target_h=None, fps=20, loop=True):
     name = os.path.splitext(os.path.basename(gif_path))[0].upper()
     img = Image.open(gif_path)
 
-    frames = []
+    frames_pixels = []
     for frame in ImageSequence.Iterator(img):
-        resized, w, h = resize_with_aspect(frame.convert("RGB"), target_w, target_h)
-        frames.append(resized)
+        resized, w, h = resize_with_aspect(frame.convert("L"), target_w, target_h)
+        pixels = to_1bit_pixels(resized)
+        frames_pixels.append(pixels)
 
-    if not frames:
+    if not frames_pixels:
         print("No frames found!")
         return
 
-    w, h = frames[0].size
-    frame_count = len(frames)
+    frame_count = len(frames_pixels)
+    
+    # Pack frame 0 into bytes (8 pixels per byte)
+    bits_frame0 = frames_pixels[0]
+    packed_frame0 = []
+    for i in range(0, len(bits_frame0), 8):
+        byte = 0
+        for j in range(8):
+            if i + j < len(bits_frame0) and bits_frame0[i + j]:
+                byte |= (1 << (7 - j))
+        packed_frame0.append(byte)
 
     out_path = os.path.join(out_dir, f"{name.lower()}.hpp")
     with open(out_path, "w", encoding="utf-8") as f:
         write_header_guard(f)
         f.write(f"namespace asset::emotion {{\n\n")
 
-        # Frames data
-        for idx, frame in enumerate(frames):
-            pixels = list(frame.getdata())
-            f.write(f"static const uint16_t {name}_FRAME{idx}_DATA[{w*h}] = {{\n")
-            for i, (r, g, b) in enumerate(pixels):
-                val = rgb888_to_rgb565(r, g, b)
-                f.write(f"0x{val:04X}, ")
-                if (i + 1) % 12 == 0:
-                    f.write("\n")
-            f.write("\n};\n\n")
-
-        # Animation object ready to use
-        f.write(f"// Animation object ready for DisplayManager::registerEmotion()\n")
-        f.write(f"static Animation {name} = {{\n")
-        f.write(f"    .frames = {{\n")
-
-        for idx in range(frame_count):
-            f.write(f"        AnimationFrame({w}, {h}, {name}_FRAME{idx}_DATA, nullptr)")
-            if idx < frame_count - 1:
-                f.write(",\n")
-            else:
+        # Frame 0: Full frame (packed 1-bit)
+        f.write(f"// Frame 0: Full 1-bit bitmap ({len(packed_frame0)} bytes, {w}x{h})\n")
+        f.write(f"const uint8_t {name}_FRAME0[{len(packed_frame0)}] = {{\n")
+        for i, byte in enumerate(packed_frame0):
+            f.write(f"0x{byte:02X},")
+            if (i + 1) % 16 == 0:
                 f.write("\n")
+        f.write("\n};\n\n")
 
-        f.write(f"    }},\n")
-        f.write(f"    .fps = {fps},\n")
-        f.write(f"    .loop = {'true' if loop else 'false'}\n")
+        total_size = len(packed_frame0)
+        total_diff_blocks = 0
+
+        # Frames 1+: Block-level diff
+        diff_data = []
+        for idx in range(1, frame_count):
+            diff = compute_pixel_diff(frames_pixels[idx - 1], frames_pixels[idx], w, h)
+            diff_data.append(diff)
+            
+            if len(diff) == 0:
+                f.write(f"// Frame {idx}: No changes\n\n")
+            else:
+                total_diff_blocks += len(diff)
+                
+                for block_idx, block in enumerate(diff):
+                    data_len = len(block['data'])
+                    f.write(f"// Frame {idx}: Diff block at ({block['x']},{block['y']}) size {block['width']}x{block['height']}\n")
+                    f.write(f"const uint8_t {name}_FRAME{idx}_DATA[{data_len}] = {{\n")
+                    for i, byte in enumerate(block['data']):
+                        f.write(f"0x{byte:02X},")
+                        if (i + 1) % 16 == 0:
+                            f.write("\n")
+                    f.write("\n};\n")
+                    
+                    total_size += 4 + data_len  # x,y,w,h + data
+                
+                f.write(f"const DiffBlock {name}_FRAME{idx}_DIFF = {{\n")
+                f.write(f"    {diff[0]['x']}, {diff[0]['y']},\n")
+                f.write(f"    {diff[0]['width']}, {diff[0]['height']},\n")
+                f.write(f"    {name}_FRAME{idx}_DATA\n")
+                f.write(f"}};\n\n")
+
+        # Animation metadata
+        f.write(f"// Animation: {w}x{h}, {frame_count} frames\n")
+        f.write(f"// Total size: {total_size} bytes ({total_diff_blocks} diff blocks)\n\n")
+
+        f.write(f"const FrameInfo {name}_FRAMES[{frame_count}] = {{\n")
+        f.write(f"    {{nullptr}},  // Frame 0: full bitmap\n")
+        for idx in range(1, frame_count):
+            if len(diff_data[idx - 1]) == 0:
+                f.write(f"    {{nullptr}},  // Frame {idx}: no change\n")
+            else:
+                f.write(f"    {{&{name}_FRAME{idx}_DIFF}},\n")
+        f.write(f"}};\n\n")
+
+        # Create animation instance using static variables
+        f.write(f"// Animation instance: {name}\n")
+        f.write(f"constexpr int {name}_WIDTH = {w};\n")
+        f.write(f"constexpr int {name}_HEIGHT = {h};\n")
+        f.write(f"constexpr int {name}_FRAME_COUNT = {frame_count};\n")
+        f.write(f"constexpr int {name}_FPS = {fps};\n")
+        f.write(f"constexpr bool {name}_LOOP = {'true' if loop else 'false'};\n\n")
+        
+        f.write(f"const Animation {name} = {{\n")
+        f.write(f"    {name}_WIDTH,\n")
+        f.write(f"    {name}_HEIGHT,\n")
+        f.write(f"    {name}_FRAME_COUNT,\n")
+        f.write(f"    {name}_FPS,\n")
+        f.write(f"    {name}_LOOP,\n")
+        f.write(f"    []() {{ return {name}_FRAME0; }},\n")
+        f.write(f"    []() {{ return {name}_FRAMES; }}\n")
         f.write(f"}};\n\n")
 
         f.write("} // namespace asset::emotion\n")
 
-    print(f"[EMOTION] Generated: {out_path}")
+    print(f"[EMOTION] {out_path} → {w}x{h}, {frame_count} frames, {total_size} bytes")
 
 # ============================================================
 # MAIN
