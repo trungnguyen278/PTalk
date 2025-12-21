@@ -1,6 +1,9 @@
 #pragma once
 
-const char PAGE_HTML[] = R"rawliteral(
+// ==========================
+// HTML HEAD + LOGO CONTAINER
+// ==========================
+const char PAGE_HTML_HEAD[] = R"rawliteral(
 <!DOCTYPE html>
 <html>
 <head>
@@ -10,8 +13,7 @@ const char PAGE_HTML[] = R"rawliteral(
     <style>
         body { font-family: sans-serif; background: #f2f4f8; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
         .card { background: #fff; padding: 25px; border-radius: 12px; box-shadow: 0 8px 20px rgba(0,0,0,0.1); width: 100%; max-width: 500px; }
-        
-        /* LOGO STYLE */
+
         .logo-container { display: flex; justify-content: center; align-items: center; gap: 20px; margin-bottom: 25px; }
         .logo-img { width: 120px; height: auto; object-fit: contain; max-width: 45%; }
 
@@ -23,12 +25,11 @@ const char PAGE_HTML[] = R"rawliteral(
         .rssi-box { text-align: right; font-size: 11px; color: #718096; }
         .bar-bg { width: 35px; height: 5px; background: #edf2f7; border-radius: 3px; margin-top: 3px; overflow: hidden; }
         .bar-fg { height: 100%; border-radius: 3px; }
-        
+
         input { width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #cbd5e0; border-radius: 6px; box-sizing: border-box; }
         input[type='submit'] { background: #3182ce; color: white; border: none; font-weight: bold; cursor: pointer; transition: 0.2s; }
         input[type='submit']:hover { background: #2b6cb0; }
-        
-        /* PASSWORD TOGGLE */
+
         .password-group { display: flex; align-items: center; gap: 8px; margin-bottom: 15px; }
         .password-group input { margin-bottom: 0; flex: 1; }
         .toggle-checkbox { width: 20px; height: 20px; cursor: pointer; }
@@ -40,15 +41,24 @@ const char PAGE_HTML[] = R"rawliteral(
 </head>
 <body>
     <div class='card'>
-        <!-- CHỖ NÀY SẼ ĐƯỢC CODE C++ TỰ ĐIỀN DỮ LIỆU VÀO -->
         <div class="logo-container">
-            <img class="logo-img" src="%LOGO1%">
-            <img class="logo-img" src="%LOGO2%">
+            <img class="logo-img" src="/logo1.jpg">
+            <img class="logo-img" src="/logo2.jpg">
         </div>
+)rawliteral";
 
+// ==========================
+// BEFORE WIFI LIST
+// ==========================
+const char PAGE_HTML_BEFORE_LIST[] = R"rawliteral(
         <h2>Cấu hình WiFi</h2>
         <div class='list-container'>
-            %WIFI_LIST%
+)rawliteral";
+
+// ==========================
+// FOOTER
+// ==========================
+const char PAGE_HTML_FOOTER[] = R"rawliteral(
         </div>
 
         <form method='POST' action='/connect'>
@@ -56,7 +66,8 @@ const char PAGE_HTML[] = R"rawliteral(
             <label>Password</label>
             <div class='password-group'>
                 <input id='p' name='pass' type='password'>
-                <input type='checkbox' class='toggle-checkbox' onclick='togglePassword()' title='Hiển thị mật khẩu'>
+                <input type='checkbox' class='toggle-checkbox'
+                       onclick='togglePassword()' title='Hiển thị mật khẩu'>
             </div>
             <input type='submit' value='KẾT NỐI'>
         </form>
