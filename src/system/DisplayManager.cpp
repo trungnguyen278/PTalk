@@ -183,7 +183,7 @@ void DisplayManager::setBacklight(bool on)
 // ----------------------------------------------------------------------------
 // Asset registration
 // ----------------------------------------------------------------------------
-void DisplayManager::registerEmotion(const std::string& name, const Animation& anim) {
+void DisplayManager::registerEmotion(const std::string& name, const Animation1Bit& anim) {
     emotions[name] = anim;
 }
 
@@ -373,7 +373,7 @@ void DisplayManager::playEmotion(const std::string& name, int x, int y)
         return;
     }
 
-    const Animation& anim = it->second;
+    const Animation1Bit& anim = it->second;
 
     ESP_LOGI(TAG, "playEmotion '%s' starting animation", name.c_str());
 

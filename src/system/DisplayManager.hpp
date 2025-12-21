@@ -127,8 +127,11 @@ public:
     void setBacklight(bool on);
 
     // --- Asset Registration ---------------------------------------------------
-    void registerEmotion(const std::string& name, const Animation& anim);
+    void registerEmotion(const std::string& name, const Animation1Bit& anim);
     void registerIcon(const std::string& name, const Icon& icon);
+    
+    // --- Asset Playback (for testing/direct control) ---
+    void playEmotion(const std::string& name, int x = 0, int y = 0);
 
 private:
     // Internal handlers mapping state -> UI behavior
@@ -138,7 +141,6 @@ private:
     void handlePower(state::PowerState s);
 
     // Internal asset playback
-    void playEmotion(const std::string& name, int x = 0, int y = 0);
     void playIcon(const std::string& name,
                   IconPlacement placement = IconPlacement::Custom,
                   int x = 0, int y = 0);
@@ -151,7 +153,7 @@ private:
     std::unique_ptr<AnimationPlayer> anim_player;
 
     // asset tables
-    std::unordered_map<std::string, Animation> emotions;
+    std::unordered_map<std::string, Animation1Bit> emotions;
     std::unordered_map<std::string, Icon> icons;
 
     // battery
