@@ -200,3 +200,47 @@ void StateManager::unsubscribePower(int id) {
         power_cbs.end()
     );
 }
+// ===========================================================
+// Emotion
+// ===========================================================
+
+void StateManager::setEmotionState(state::EmotionState s) {
+    std::vector<std::pair<int, EmotionCb>> callbacks;
+    
+    {
+        std::lock_guard<std::mutex> lk(mtx);
+        if (s == emotion_state) return;
+
+        emotion_state = s;
+        ESP_LOGI(TAG, "EmotionState: %d (change)", static_cast<int>(s));
+
+        // Copy callbacks under lock
+        callbacks = emotion_cbs;
+    }  // Lock released here
+
+    // ✅ Call callbacks OUTSIDE lock to prevent deadlocks
+    for (auto &p : callbacks) {
+        if (p.second) p.second(s);
+    }
+}
+
+state::EmotionState StateManager::getEmotionState() {
+    std::lock_guard<std::mutex> lk(mtx);
+    return emotion_state;
+}
+
+int StateManager::subscribeEmotion(EmotionCb cb) {
+    std::lock_guard<std::mutex> lk(mtx);
+    int id = next_sub_id++;
+    emotion_cbs.emplace_back(id, std::move(cb));
+    return id;
+}
+
+void StateManager::unsubscribeEmotion(int id) {
+    std::lock_guard<std::mutex> lk(mtx);
+    emotion_cbs.erase(
+        std::remove_if(emotion_cbs.begin(), emotion_cbs.end(),
+        [id](auto &p){ return p.first == id; }),
+        emotion_cbs.end()
+    );
+}

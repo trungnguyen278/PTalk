@@ -61,4 +61,19 @@ namespace state
         UNKNOWN         // fallback
     };
 
+    // ---------- Emotion (from WebSocket server message codes) ----------
+    // Server sends emotion codes like "01", "11", etc. during SPEAKING phase
+    // Maps to UI animations and voice characteristics
+    enum class EmotionState : uint8_t
+    {
+        NEUTRAL,    // Default, natural expression (00, no emotion code)
+        HAPPY,      // Cheerful, friendly (e.g., "01")
+        SAD,        // Empathetic, concerned (e.g., "11")
+        ANGRY,      // Alert, urgent (e.g., "02")
+        CONFUSED,   // Uncertain, seeking clarification (e.g., "12")
+        EXCITED,    // Surprise, delight, enthusiasm (e.g., "03")
+        CALM,       // Soothing, peaceful, reassuring (e.g., "13")
+        THINKING    // Processing state (internal use)
+    };
+
 } // namespace state
