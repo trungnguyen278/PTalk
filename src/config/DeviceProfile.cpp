@@ -350,6 +350,9 @@ bool DeviceProfile::setup(AppController &app)
 
     auto power = std::make_unique<PowerManager>(std::move(power_driver), power_cfg);
 
+    // Link PowerManager → DisplayManager for battery % updates
+    power->setDisplayManager(display.get());
+
     // App-level power behavior (deep sleep re-check interval)
     AppController::Config app_cfg{};
     app_cfg.deep_sleep_wakeup_sec = 60; // wake every 60s to re-check battery
