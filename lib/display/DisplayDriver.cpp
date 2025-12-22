@@ -81,6 +81,18 @@ void DisplayDriver::setAddressWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint
     uint16_t xe = x1 + cfg_.x_offset;
     uint16_t ys = y0 + cfg_.y_offset;
     uint16_t ye = y1 + cfg_.y_offset;
+    
+    // Khi rotation = 2 (180°), tăng Y thêm (320 - 240) = 80px
+    if (rotation_ == 2) {
+        ys += (320 - 240);
+        ye += (320 - 240);
+    }
+    
+    // Khi rotation = 3 (270°), tăng X thêm (320 - 240) = 80px
+    if (rotation_ == 3) {
+        xs += (320 - 240);
+        xe += (320 - 240);
+    }
 
     uint8_t col_data[4] = {
         (uint8_t)(xs >> 8), (uint8_t)(xs & 0xFF),
@@ -324,28 +336,37 @@ void DisplayDriver::drawTextCenter(Framebuffer* fb, const char* text, uint16_t c
 // Display rotation (0, 1, 2, 3 = 0°, 90°, 180°, 270°)
 void DisplayDriver::setRotation(uint8_t rotation)
 {
-    // MADCTL bits for rotation
-    // Rot 0 (0°):   MY=1, MX=1, MV=0  → normal
-    // Rot 1 (90°):  MY=0, MX=1, MV=1  → rotate 90 CW
-    // Rot 2 (180°): MY=0, MX=0, MV=0  → rotate 180
-    // Rot 3 (270°): MY=1, MX=0, MV=1  → rotate 270 CW
+    // ST7789 MADCTL cho 4 rotation (0° và 180° đã đúng, fix 90° và 270°)
+    // 0° và 180°: Portrait (MV=0)
+    // 90° và 270°: Landscape (MV=1)
     
     uint8_t madctl = 0;
+    uint16_t new_x_offset = 0;
+    uint16_t new_y_offset = 0;
     
     rotation = rotation % 4;  // Ensure 0-3
-    
+
+
     switch (rotation) {
-        case 0:  // 0°
-            madctl = ST7789_MADCTL_MX | ST7789_MADCTL_MY;
-            break;
-        case 1:  // 90°
-            madctl = ST7789_MADCTL_MX | ST7789_MADCTL_MV;
-            break;
-        case 2:  // 180°
+        case 0:  // 0° - Portrait (GIỮ NGUYÊN)
             madctl = 0;
+            new_x_offset = 0;
+            new_y_offset = 0;
             break;
-        case 3:  // 270°
+        case 1:  // 90° - Landscape CW (FIX: đảo offset từ Y sang X)
+            madctl = ST7789_MADCTL_MX | ST7789_MADCTL_MV;
+            new_x_offset = 0;  // 80 pixel offset chuyển sang X
+            new_y_offset = 0;
+            break;
+        case 2:  // 180° - Portrait flipped (GIỮ NGUYÊN)
+            madctl = ST7789_MADCTL_MX | ST7789_MADCTL_MY;
+            new_x_offset = 0;
+            new_y_offset = 0;
+            break;
+        case 3:  // 270° - Landscape CCW (FIX: đảo offset từ Y sang X)
             madctl = ST7789_MADCTL_MY | ST7789_MADCTL_MV;
+            new_x_offset = 0;  // 80 pixel offset chuyển sang X
+            new_y_offset = 0;
             break;
     }
     
@@ -355,5 +376,12 @@ void DisplayDriver::setRotation(uint8_t rotation)
     sendCommand(ST7789_CMD_MADCTL);
     sendData(&madctl, 1);
     
-    ESP_LOGI(TAG, "Display rotation set to %u (0x%02X)", rotation, madctl);
+    // Store rotation for later use in setAddressWindow
+    rotation_ = rotation;
+    
+    // Update cfg with new offsets
+    cfg_.x_offset = new_x_offset;
+    cfg_.y_offset = new_y_offset;
+    
+    ESP_LOGI(TAG, "Display rotation set to %u (0x%02X), offset=(%u,%u)", rotation, madctl, new_x_offset, new_y_offset);
 }

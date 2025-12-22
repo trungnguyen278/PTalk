@@ -64,6 +64,8 @@ public:
     void drawTextCenter(Framebuffer* fb, const char* text, uint16_t color, int cx, int cy);
 
     // Display rotation (0, 1, 2, 3 = 0°, 90°, 180°, 270°)
+    // With automatic offset adjustment for ST7789 panels with physical offset
+    // For 0°/180°: y_offset applies; For 90°/270°: x_offset applies (80px shifts to X axis)
     void setRotation(uint8_t rotation);
 
     uint16_t width() const { return width_; }
@@ -81,6 +83,8 @@ private:
 
     uint16_t width_  = 240;
     uint16_t height_ = 240;
+
+    uint8_t rotation_ = 0;
 
     bool initialized = false;
 };
