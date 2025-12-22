@@ -82,9 +82,15 @@ private:
     int pos_x_ = 0;
     int pos_y_ = 0;
 
-    // Working buffer for current decoded frame (RGB565)
-    uint16_t* working_buffer_ = nullptr;
-    size_t buffer_size_ = 0;
+    // Streaming scanline buffer: decode+render hàng một
+    // (8 rows × width pixels × 2 bytes/pixel = 8 × 240 × 2 = 3840 bytes max)
+    static constexpr int SCANLINE_ROWS = 8;
+    uint16_t* scanline_buffer_ = nullptr;
+    size_t scanline_buf_size_ = 0;
+
+    // Packed 1-bit frame buffer (not decoded; only ~6–8 KB)
+    uint8_t* packed_frame_ = nullptr;
+    size_t packed_frame_size_ = 0;
 
     uint32_t frame_timer_ = 0;   // tăng theo dt
     uint32_t frame_interval_ = 50; // ms/frame (20 fps)

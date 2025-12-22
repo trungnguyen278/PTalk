@@ -204,6 +204,34 @@ void DisplayManager::update(uint32_t dt_ms)
         first_update = false;
     }
 
+    // 0) If text mode active, render text only (no animation)
+    if (text_active_) {
+        fb->clear(0x0000);
+        int draw_x = text_x_;
+        int draw_y = text_y_;
+        const int text_width = static_cast<int>(text_msg_.size()) * 8 * text_scale_;
+        const int text_height = 8 * text_scale_;
+        if (draw_x < 0) {
+            draw_x = (width_ - text_width) / 2;
+        }
+        if (draw_y < 0) {
+            draw_y = (height_ - text_height) / 2;
+        }
+        drv->drawText(fb.get(), text_msg_.c_str(), text_color_, draw_x, draw_y, text_scale_);
+        if (battery_percent < 101) {  // Valid: 0-100%
+            // Clear previous battery text area first
+            for (int x = width_ - 50; x < width_; x++) {
+                for (int y = 0; y < 20; y++) {
+                    fb->drawPixel(x, y, 0x0000);  // black
+                }
+            }
+            std::string bat_str = std::to_string(battery_percent) + "%";
+            drv->drawText(fb.get(), bat_str.c_str(), 0xFFFF, width_-32, 5);
+        }
+        drv->flush(fb.get());
+        return;
+    }
+
     // 1) update animation frame
     anim_player->update(dt_ms);
     
@@ -216,9 +244,13 @@ void DisplayManager::update(uint32_t dt_ms)
 
     // (toast drawing removed)
     // 4) draw battery percent if available
-    if (battery_percent != 255) {
-        std::string bat_str = std::to_string(battery_percent) + "%";
-        drv->drawText(fb.get(), bat_str.c_str(), 0xFFFF, width_-40, 10);
+    if (battery_percent != 255) {        // Clear previous battery text area first (top-right corner)
+        for (int x = width_ - 50; x < width_; x++) {
+            for (int y = 0; y < 20; y++) {
+                fb->drawPixel(x, y, 0x0000);  // black
+            }
+        }        std::string bat_str = std::to_string(battery_percent) + "%";
+        drv->drawText(fb.get(), bat_str.c_str(), 0xFFFF, width_ - 32, 5);
     }
 
     // 5) push framebuffer to display
@@ -280,20 +312,26 @@ void DisplayManager::handleConnectivity(state::ConnectivityState s)
 {
     switch (s) {
         case state::ConnectivityState::OFFLINE:
-            playIcon("wifi_fail");
+            // show text "Offline"
+            playText("Offline", 0xFFFF);  // white text
             break;
 
         case state::ConnectivityState::CONNECTING_WIFI:
+            // Show text "Connecting WiFi..."
+            playText("Connecting WiFi...", 0xFFFF);
             break;
 
         case state::ConnectivityState::WIFI_PORTAL:
+            // Show text "WiFi Portal Mode"
+            //playText("WiFi Portal Mode", 0xFFFF);
+            playEmotion("sad");
             break;
 
         case state::ConnectivityState::CONNECTING_WS:
             break;
 
         case state::ConnectivityState::ONLINE:
-            playIcon("wifi_ok");
+            //playIcon("wifi_ok");
             break;
     }
 }
@@ -302,10 +340,12 @@ void DisplayManager::handleSystem(state::SystemState s)
 {
     switch (s) {
         case state::SystemState::BOOTING:
-            playEmotion("boot");
+            ESP_LOGI(TAG, "Displaying Booting message");
+            playText("PTIT", 40, 0, 0xF800, 2); //red
             break;
 
         case state::SystemState::RUNNING:
+            ESP_LOGI(TAG, "Displaying Running message");
             playEmotion("idle");
             break;
 
@@ -377,11 +417,36 @@ void DisplayManager::playEmotion(const std::string& name, int x, int y)
 
     ESP_LOGI(TAG, "playEmotion '%s' starting animation", name.c_str());
 
-    // Clear previous
-    //fb->clear(0x0000);
+    // Disable text mode when playing animation
+    text_active_ = false;
+
+    // Default y=22 to reserve space for battery display (top 22px)
+    if (y == 0) {
+        y = 22;
+    }
 
     // Start animation centered or at (x,y)
     anim_player->setAnimation(anim, x, y);
+}
+
+void DisplayManager::playText(const std::string& text, int x, int y, uint16_t color, int scale)
+{
+    ESP_LOGI(TAG, "playText '%s' at (%d,%d) color=0x%04X scale=%d", text.c_str(), x, y, color, scale);
+    if (scale < 1) scale = 1;  // keep visible text size
+    text_msg_ = text;
+    text_x_ = x;
+    text_y_ = y;
+    text_color_ = color;
+    text_scale_ = scale;
+    text_active_ = true;
+    // Stop animation to avoid overwriting text
+    anim_player->stop();
+}
+
+void DisplayManager::clearText()
+{
+    text_active_ = false;
+    text_msg_.clear();
 }
 
 void DisplayManager::playIcon(const std::string& name,

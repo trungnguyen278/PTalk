@@ -144,17 +144,17 @@ void Framebuffer::drawBitmapAlpha(
     }
 }
 
-void Framebuffer::drawText8x8(int x, int y, const char* text, uint16_t color)
+void Framebuffer::drawText8x8(int x, int y, const char* text, uint16_t color, int scale)
 {
     if (!pixels_ || !text) return;
+    if (scale < 1) scale = 1;
 
     int cx = x;
     const char* p = text;
     while (*p) {
         unsigned char c = static_cast<unsigned char>(*p);
         if (c < 32 || c > 127) {
-            // unknown: advance by 8
-            cx += 8;
+            cx += 8 * scale;
             ++p;
             continue;
         }
@@ -163,18 +163,25 @@ void Framebuffer::drawText8x8(int x, int y, const char* text, uint16_t color)
 
         for (int row = 0; row < 8; ++row) {
             uint8_t bits = glyph[row];
-            int yy = y + row;
-            if (yy < 0 || yy >= height_) continue;
+            int yy0 = y + row * scale;
             for (int col = 0; col < 8; ++col) {
-                int xx = cx + col;
-                if (xx < 0 || xx >= width_) continue;
                 if (bits & (1 << (7 - col))) {
-                    pixels_[yy * width_ + xx] = color;
+                    int xx0 = cx + col * scale;
+                    for (int dy = 0; dy < scale; ++dy) {
+                        int py = yy0 + dy;
+                        if (py < 0 || py >= height_) continue;
+                        uint16_t* row_ptr = pixels_ + py * width_;
+                        for (int dx = 0; dx < scale; ++dx) {
+                            int px = xx0 + dx;
+                            if (px < 0 || px >= width_) continue;
+                            row_ptr[px] = color;
+                        }
+                    }
                 }
             }
         }
 
-        cx += 8;
+        cx += 8 * scale;
         ++p;
     }
 }

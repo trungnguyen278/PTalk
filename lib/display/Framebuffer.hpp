@@ -41,7 +41,7 @@ public:
     );
 
     // Simple 8x8 bitmap font (used for toast)
-    void drawText8x8(int x, int y, const char* text, uint16_t color);
+    void drawText8x8(int x, int y, const char* text, uint16_t color, int scale = 1);
 
 private:
     int width_;

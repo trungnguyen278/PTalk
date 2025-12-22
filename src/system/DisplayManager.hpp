@@ -132,6 +132,12 @@ public:
     
     // --- Asset Playback (for testing/direct control) ---
     void playEmotion(const std::string& name, int x = 0, int y = 0);
+    void playText(const std::string& text,
+                  int x = -1,
+                  int y = -1,
+                  uint16_t color = 0xFFFF,
+                  int scale = 1);
+    void clearText();
 
 private:
     // Internal handlers mapping state -> UI behavior
@@ -158,6 +164,14 @@ private:
 
     // battery
     uint8_t battery_percent = 255;
+
+    // text playback state (mutually exclusive with animation)
+    bool text_active_ = false;
+    std::string text_msg_{};
+    int text_x_ = -1;
+    int text_y_ = -1;
+    uint16_t text_color_ = 0xFFFF;
+    int text_scale_ = 1;
 
     // (toast system removed)
 

@@ -210,6 +210,25 @@ bool DisplayDriver::init(const Config& cfg)
 }
 
 // ----------------------------------------------------------------------------
+// Window + streaming write
+// ----------------------------------------------------------------------------
+void DisplayDriver::setWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
+{
+    if (!initialized) return;
+    setAddressWindow(x0, y0, x1, y1);
+    gpio_set_level((gpio_num_t)cfg_.pin_dc, 1);
+}
+
+void DisplayDriver::writePixels(const uint16_t* buffer, size_t len_bytes)
+{
+    if (!initialized || !buffer || len_bytes == 0) return;
+    spi_transaction_t t = {};
+    t.length = len_bytes * 8;  // bits
+    t.tx_buffer = buffer;
+    ESP_ERROR_CHECK(spi_device_transmit(spi_dev, &t));
+}
+
+// ----------------------------------------------------------------------------
 // Backlight deep-sleep hold control
 // ----------------------------------------------------------------------------
 void DisplayDriver::holdBacklightDuringDeepSleep(bool enable)
@@ -312,26 +331,27 @@ void DisplayDriver::drawBitmap(int x, int y, int w, int h, const uint16_t* pixel
 // Text rendering (very simple bitmap font)
 // ----------------------------------------------------------------------------
 
-void DisplayDriver::drawText(Framebuffer* fb, const char* text, uint16_t color, int x, int y)
+void DisplayDriver::drawText(Framebuffer* fb, const char* text, uint16_t color, int x, int y, int scale)
 {
     if (!fb || !text) return;
 
-    fb->drawText8x8(x, y, text, color);
+    fb->drawText8x8(x, y, text, color, scale);
 }
 
-void DisplayDriver::drawTextCenter(Framebuffer* fb, const char* text, uint16_t color, int cx, int cy)
+void DisplayDriver::drawTextCenter(Framebuffer* fb, const char* text, uint16_t color, int cx, int cy, int scale)
 {
     if (!fb || !text) return;
 
     //ESP_LOGI(TAG, "drawTextCenter called: text='%s' color=0x%04X pos=(%d,%d)", text, color, cx, cy);
 
     int len = strlen(text);
-    int text_w = len * 8;
+    if (scale < 1) scale = 1;
+    int text_w = len * 8 * scale;
     int x = cx - text_w / 2;
-    int y = cy - 4;
+    int y = cy - 4 * scale;
 
     //ESP_LOGI(TAG, "drawTextCenter: drawing at (%d,%d)", x, y);
-    fb->drawText8x8(x, y, text, color);
+    fb->drawText8x8(x, y, text, color, scale);
 }
 // Display rotation (0, 1, 2, 3 = 0°, 90°, 180°, 270°)
 void DisplayDriver::setRotation(uint8_t rotation)

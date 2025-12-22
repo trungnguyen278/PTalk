@@ -60,8 +60,16 @@ public:
     void drawBitmap(int x, int y, int w, int h, const uint16_t* pixels);
 
     // Convenient helpers
-    void drawText(Framebuffer* fb, const char* text, uint16_t color, int x, int y);
-    void drawTextCenter(Framebuffer* fb, const char* text, uint16_t color, int cx, int cy);
+    void drawText(Framebuffer* fb, const char* text, uint16_t color, int x, int y, int scale = 1);
+    void drawTextCenter(Framebuffer* fb, const char* text, uint16_t color, int cx, int cy, int scale = 1);
+
+    // Set address window for streaming/scanline rendering
+    // x0, y0: top-left; x1, y1: bottom-right (inclusive)
+    void setWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1);
+
+    // Write raw pixel buffer to current window (used after setWindow)
+    // buffer: RGB565 pixels, len_bytes: size in bytes (width * height * 2)
+    void writePixels(const uint16_t* buffer, size_t len_bytes);
 
     // Display rotation (0, 1, 2, 3 = 0°, 90°, 180°, 270°)
     // With automatic offset adjustment for ST7789 panels with physical offset
