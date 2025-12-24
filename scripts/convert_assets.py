@@ -1,3 +1,23 @@
+def to_2bit(img: Image.Image) -> List[int]:
+    """Convert grayscale image to 2-bit per pixel (4 levels: 0-3)."""
+    pixels = list(img.getdata())
+    return [p // 64 for p in pixels]  # 0-63:0, 64-127:1, 128-191:2, 192-255:3
+
+def encode_rle_2bit(pixels: List[int]) -> List[int]:
+    """RLE encode 2-bit grayscale pixels. Format: [count, value]"""
+    if not pixels:
+        return []
+    encoded = []
+    i = 0
+    while i < len(pixels):
+        value = pixels[i] & 0x03
+        count = 1
+        while i + count < len(pixels) and pixels[i + count] == value and count < 255:
+            count += 1
+        encoded.append(count)
+        encoded.append(value)
+        i += count
+    return encoded
 #!/usr/bin/env python3
 import os
 import argparse
@@ -103,17 +123,43 @@ def convert_icon(png_path, out_dir, target_w=None, target_h=None, max_dim=None):
     print(f"[ICON] {out_path} → {w}x{h}, {len(jpeg_data)} bytes")
 
 # ============================================================
-# EMOTION (GIF → 1-bit with diff encoding)
+# EMOTION (GIF → 4-bit grayscale with RLE encoding)
 # ============================================================
 
-def to_1bit_pixels(img: Image.Image, threshold=128) -> List[int]:
-    """Convert grayscale image to 1-bit per pixel (white=1, black=0)."""
+def to_4bit_grayscale(img: Image.Image) -> List[int]:
+    """Convert grayscale image to 4-bit per pixel (16 levels: 0-15).
+    Maps 0-255 → 0-15 (divide by 16)"""
     pixels = list(img.getdata())
-    return [1 if p >= threshold else 0 for p in pixels]
+    return [p >> 4 for p in pixels]  # Divide by 16 to get 4-bit value
+
+def encode_rle_4bit(pixels: List[int]) -> List[int]:
+    """RLE encode 4-bit grayscale pixels.
+    Format: [count_byte, value_byte, count_byte, value_byte, ...]
+    count_byte: 1-255 (number of consecutive pixels with same value)
+    value_byte: 0-15 (grayscale value)
+    """
+    if not pixels:
+        return []
+    
+    encoded = []
+    i = 0
+    while i < len(pixels):
+        value = pixels[i]
+        count = 1
+        # Count consecutive pixels with same value (max 255)
+        while i + count < len(pixels) and pixels[i + count] == value and count < 255:
+            count += 1
+        
+        encoded.append(count)
+        encoded.append(value)
+        i += count
+    
+    return encoded
 
 def compute_pixel_diff(prev_pixels: List[int], curr_pixels: List[int], w: int, h: int) -> List[dict]:
-    """Compute rectangular diff blocks between two 1-bit frames.
+    """Compute rectangular diff blocks between two 4-bit grayscale frames.
     Returns: list of {x, y, width, height, data} dicts for changed regions
+    Data is RLE encoded (2 bytes per token: count_byte, value_byte)
     """
     # Find all changed pixels
     changed_coords = []
@@ -144,21 +190,15 @@ def compute_pixel_diff(prev_pixels: List[int], curr_pixels: List[int], w: int, h
             idx = py * w + px
             box_pixels.append(curr_pixels[idx])
     
-    # Pack into bytes (8 pixels per byte)
-    packed = []
-    for i in range(0, len(box_pixels), 8):
-        byte = 0
-        for j in range(8):
-            if i + j < len(box_pixels) and box_pixels[i + j]:
-                byte |= (1 << (7 - j))
-        packed.append(byte)
+    # RLE encode the diff block
+    rle_data = encode_rle_1bit(box_pixels)
     
     return [{
         'x': min_x,
         'y': min_y,
         'width': box_w,
         'height': box_h,
-        'data': packed
+        'data': rle_data
     }]
 
 def convert_emotion(gif_path, out_dir, target_w=None, target_h=None, fps=10, loop=True):
@@ -169,7 +209,7 @@ def convert_emotion(gif_path, out_dir, target_w=None, target_h=None, fps=10, loo
     frames_pixels = []
     for frame in ImageSequence.Iterator(img):
         resized, w, h = resize_with_aspect(frame.convert("L"), target_w, target_h)
-        pixels = to_1bit_pixels(resized)
+        pixels = to_2bit(resized)
         frames_pixels.append(pixels)
 
     if not frames_pixels:
@@ -178,35 +218,24 @@ def convert_emotion(gif_path, out_dir, target_w=None, target_h=None, fps=10, loo
 
     frame_count = len(frames_pixels)
     
-    # Create black screen (all pixels = 0) for frame 0 diff
-    black_screen = [0] * (w * h)
-
-    # We'll emit a lightweight header (.hpp) with only the Animation declaration
-    # and put the heavy byte data into a companion .cpp file to avoid huge headers.
+    # File paths
     out_hpp = os.path.join(out_dir, f"{name_lower}.hpp")
     out_cpp = os.path.join(out_dir, f"{name_lower}.cpp")
-
-    # Gather diff data for all frames to reuse across hpp/cpp writing
-    diff_data = []
+    
+    # Encode each frame as full RLE (no diff)
+    frame_data = []
     total_size = 0
-    total_diff_blocks = 0
+    max_frame_size = 0
 
-    # Frame 0: diff from black screen
-    diff0 = compute_pixel_diff(black_screen, frames_pixels[0], w, h)
-    diff_data.append(diff0)
-    if len(diff0):
-        total_diff_blocks += len(diff0)
-        for block in diff0:
-            total_size += 4 + len(block['data'])  # x,y,w,h + data
-
-    # Frames 1+: diff from previous frame
-    for idx in range(1, frame_count):
-        diff = compute_pixel_diff(frames_pixels[idx - 1], frames_pixels[idx], w, h)
-        diff_data.append(diff)
-        if len(diff):
-            total_diff_blocks += len(diff)
-            for block in diff:
-                total_size += 4 + len(block['data'])
+    for idx, pixels in enumerate(frames_pixels):
+        # RLE encode full frame (2-bit grayscale)
+        rle_data = encode_rle_2bit(pixels)
+        frame_data.append(rle_data)
+        total_size += len(rle_data)
+        max_frame_size = max(max_frame_size, len(rle_data))
+    
+    # Calculate max packed size (decoded buffer size for one frame)
+    max_packed_size = (w * h + 7) // 8
 
     # =====================
     # Write header (.hpp)
@@ -220,39 +249,46 @@ def convert_emotion(gif_path, out_dir, target_w=None, target_h=None, fps=10, loo
     # =====================
     # Write implementation (.cpp)
     # =====================
+    # Write header (.hpp)
+    # =====================
+    out_hpp = os.path.join(out_dir, f"{name_lower}.hpp")
+    out_cpp = os.path.join(out_dir, f"{name_lower}.cpp")
+    
+    with open(out_hpp, "w", encoding="utf-8") as f:
+        write_header_guard(f)
+        f.write("namespace asset::emotion {\n\n")
+        f.write(f"extern const Animation {name_upper};\n\n")
+        f.write("} // namespace asset::emotion\n")
+
+    # =====================
+    # Write implementation (.cpp)
+    # =====================
     with open(out_cpp, "w", encoding="utf-8") as f:
         f.write(f"#include \"{name_lower}.hpp\"\n\n")
         f.write("namespace asset::emotion {\n\n")
 
-        # Emit frame data arrays and DiffBlocks
-        for idx, diff in enumerate(diff_data):
-            if len(diff) == 0:
-                f.write(f"// Frame {idx}: No changes\n\n")
-                continue
+        # Emit frame data arrays (full RLE, not diff)
+        for idx, rle_data in enumerate(frame_data):
+            data_len = len(rle_data)
+            f.write(f"// Frame {idx}: Full frame RLE ({data_len} bytes)\n")
+            f.write(f"static const uint8_t {name_upper}_FRAME{idx}_DATA[{data_len}] = {{\n")
+            for i, byte in enumerate(rle_data):
+                f.write(f"0x{byte:02X},")
+                if (i + 1) % 16 == 0:
+                    f.write("\n")
+            f.write("\n};\n")
 
-            for block_idx, block in enumerate(diff):
-                data_len = len(block['data'])
-                f.write(f"// Frame {idx}: Diff block at ({block['x']},{block['y']}) size {block['width']}x{block['height']}\n")
-                f.write(f"static const uint8_t {name_upper}_FRAME{idx}_DATA[{data_len}] = {{\n")
-                for i, byte in enumerate(block['data']):
-                    f.write(f"0x{byte:02X},")
-                    if (i + 1) % 16 == 0:
-                        f.write("\n")
-                f.write("\n};\n")
-
-                f.write(f"static const DiffBlock {name_upper}_FRAME{idx}_DIFF = {{\n")
-                f.write(f"    {block['x']}, {block['y']},\n")
-                f.write(f"    {block['width']}, {block['height']},\n")
-                f.write(f"    {name_upper}_FRAME{idx}_DATA\n")
-                f.write(f"}};\n\n")
+            # Store as DiffBlock for compatibility (x=0, y=0, width=w, height=h)
+            f.write(f"static const DiffBlock {name_upper}_FRAME{idx}_BLOCK = {{\n")
+            f.write(f"    0, 0,  // Full frame starts at (0,0)\n")
+            f.write(f"    {w}, {h},  // Full frame dimensions\n")
+            f.write(f"    {name_upper}_FRAME{idx}_DATA\n")
+            f.write(f"}};\n\n")
 
         # FrameInfo array
         f.write(f"static const FrameInfo {name_upper}_FRAMES[{frame_count}] = {{\n")
-        for idx, diff in enumerate(diff_data):
-            if len(diff) == 0:
-                f.write("    {nullptr},\n")
-            else:
-                f.write(f"    {{&{name_upper}_FRAME{idx}_DIFF}},\n")
+        for idx in range(frame_count):
+            f.write(f"    {{&{name_upper}_FRAME{idx}_BLOCK}},\n")
         f.write("};\n\n")
 
         # Animation instance
@@ -262,13 +298,15 @@ def convert_emotion(gif_path, out_dir, target_w=None, target_h=None, fps=10, loo
         f.write(f"    {frame_count},\n")
         f.write(f"    {fps},\n")
         f.write(f"    {'true' if loop else 'false'},\n")
-        f.write(f"    nullptr,  // no packed full frame; frame0 is diff from black\n")
+        f.write(f"    {max_packed_size},  // max packed size (1 full frame)\n")
+        f.write(f"    nullptr,  // no separate base frame\n")
         f.write(f"    []() {{ return {name_upper}_FRAMES; }}\n")
         f.write("};\n\n")
 
         f.write("} // namespace asset::emotion\n")
 
-    print(f"[EMOTION] {out_hpp} (+cpp) → {w}x{h}, {frame_count} frames, {total_size} bytes, {total_diff_blocks} diff blocks")
+    print(f"[EMOTION] {out_hpp} (+cpp) → {w}x{h}, {frame_count} frames, {total_size} bytes RLE")
+    print(f"          Max RLE frame: {max_frame_size} bytes, packed buffer: {max_packed_size} bytes")
 
 # ============================================================
 # MAIN

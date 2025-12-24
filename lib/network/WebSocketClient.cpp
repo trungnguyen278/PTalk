@@ -1,6 +1,7 @@
 #include "WebSocketClient.hpp"
 #include "esp_log.h"
 #include "esp_event.h"
+#include "esp_heap_caps.h"
 
 static const char* TAG = "WebSocketClient";
 
@@ -31,7 +32,7 @@ void WebSocketClient::connect() {
 
     esp_websocket_client_config_t cfg = {};
     cfg.uri = ws_url.c_str();
-    cfg.buffer_size = 4096;
+    cfg.buffer_size = 4096;  // Reduced from 8KB - we now have freed 115KB from Framebuffer removal
     cfg.disable_auto_reconnect = true;
 
     client = esp_websocket_client_init(&cfg);
@@ -47,19 +48,25 @@ void WebSocketClient::connect() {
         this
     ));
 
+    ESP_LOGI(TAG, "Free heap before ws_start: %d bytes", esp_get_free_heap_size());
     ESP_LOGI(TAG, "Connecting to WS: %s", ws_url.c_str());
     esp_websocket_client_start(client);
+    ESP_LOGI(TAG, "Free heap after ws_start: %d bytes", esp_get_free_heap_size());
 
     if (status_cb) status_cb(1); // CONNECTING
 }
 
 void WebSocketClient::close() {
     if (client) {
+        ESP_LOGI(TAG, "Free heap before close: %d bytes", esp_get_free_heap_size());
         ESP_LOGI(TAG, "Closing WebSocket...");
         esp_websocket_client_close(client, 100);
+        // Give internal task time to cleanup
+        vTaskDelay(pdMS_TO_TICKS(200));
         esp_websocket_client_destroy(client);
         client = nullptr;
         connected = false;
+        ESP_LOGI(TAG, "Free heap after close: %d bytes", esp_get_free_heap_size());
     }
 
     if (status_cb) status_cb(0); // CLOSED
@@ -126,6 +133,12 @@ void WebSocketClient::eventHandler(esp_event_base_t base, int32_t event_id,
 
     case WEBSOCKET_EVENT_DISCONNECTED:
         ESP_LOGW(TAG, "WS disconnected");
+        connected = false;
+        if (status_cb) status_cb(0);
+        break;
+
+    case WEBSOCKET_EVENT_ERROR:
+        ESP_LOGE(TAG, "WS error event");
         connected = false;
         if (status_cb) status_cb(0);
         break;
