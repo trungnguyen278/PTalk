@@ -10,11 +10,11 @@ static const char* TAG = "AnimationPlayer";
 static constexpr uint16_t COLOR_BLACK = 0x0000;
 static constexpr uint16_t COLOR_WHITE = 0xFFFF;
 
-AnimationPlayer::AnimationPlayer(Framebuffer* fb, DisplayDriver* drv)
-    : fb_(fb), drv_(drv)
+AnimationPlayer::AnimationPlayer(DisplayDriver* drv)
+    : drv_(drv)
 {
-    if (!fb_ || !drv_) {
-        ESP_LOGE(TAG, "AnimationPlayer created with null fb or driver!");
+    if (!drv_) {
+        ESP_LOGE(TAG, "AnimationPlayer created with null driver!");
     }
 }
 
@@ -23,10 +23,6 @@ AnimationPlayer::~AnimationPlayer()
     if (scanline_buffer_) {
         free(scanline_buffer_);
         scanline_buffer_ = nullptr;
-    }
-    if (packed_frame_) {
-        free(packed_frame_);
-        packed_frame_ = nullptr;
     }
 }
 
@@ -66,26 +62,9 @@ void AnimationPlayer::setAnimation(const Animation1Bit& anim, int x, int y)
         }
     }
 
-    // Allocate packed frame buffer (1-bit: width*height/8 bytes)
-    size_t packed_size = (anim.width * anim.height + 7) / 8;
-    if (packed_size != packed_frame_size_) {
-        if (packed_frame_) free(packed_frame_);
-        packed_frame_ = (uint8_t*)malloc(packed_size);
-        packed_frame_size_ = packed_size;
-        if (!packed_frame_) {
-            ESP_LOGE(TAG, "Failed to allocate packed frame buffer (%zu bytes)", packed_size);
-            stop();
-            return;
-        }
-    }
-
-    // Clear frame buffer to black (all pixels = 0)
-    // Since frame 0 is now a diff from black screen, we start with black
-    memset(packed_frame_, 0, packed_size);
-
-    ESP_LOGI(TAG, "Animation set: %d frames (%dx%d), fps=%u, loop=%s | scanline=%zuB, packed=%zuB",
+    ESP_LOGI(TAG, "Animation set: %d frames (%dx%d), fps=%u, loop=%s | scanline=%zuB",
              anim.frame_count, anim.width, anim.height, anim.fps,
-             anim.loop ? "true" : "false", scanline_size, packed_size);
+             anim.loop ? "true" : "false", scanline_size);
 }
 
 void AnimationPlayer::stop()
@@ -108,38 +87,23 @@ void AnimationPlayer::resume()
 
 void AnimationPlayer::update(uint32_t dt_ms)
 {
-    if (!playing_ || paused_ || !current_anim_.valid() || !packed_frame_)
+    if (!playing_ || paused_ || !current_anim_.valid())
         return;
 
     frame_timer_ += dt_ms;
 
-    // Update frame index & apply diffs
+    // Update frame index
     while (frame_timer_ >= frame_interval_) {
         frame_timer_ -= frame_interval_;
         frame_index_++;
 
         if (frame_index_ >= (size_t)current_anim_.frame_count) {
             if (current_anim_.loop) {
-                // Loop back to frame 0: clear to black and apply frame 0 diff
                 frame_index_ = 0;
-                memset(packed_frame_, 0, packed_frame_size_);
-                
-                // Apply frame 0 diff (from black screen)
-                const asset::emotion::FrameInfo& frame_info = current_anim_.frames[0];
-                if (frame_info.diff != nullptr) {
-                    applyDiffBlock(frame_info.diff);
-                }
             } else {
-                // one-shot animation stops
                 frame_index_ = current_anim_.frame_count - 1;
                 playing_ = false;
                 break;
-            }
-        } else {
-            // Apply diff for new frame
-            const asset::emotion::FrameInfo& frame_info = current_anim_.frames[frame_index_];
-            if (frame_info.diff != nullptr) {
-                applyDiffBlock(frame_info.diff);
             }
         }
     }
@@ -154,65 +118,72 @@ void AnimationPlayer::decode1BitToRGB565(const uint8_t* packed_data, int width, 
     (void)height;
 }
 
-void AnimationPlayer::applyDiffBlock(const asset::emotion::DiffBlock* diff)
+void AnimationPlayer::decodeRLEScanline(const uint8_t* rle_data, int start_y, int num_rows, uint16_t* out_buffer)
 {
-    if (!diff || !diff->data || !packed_frame_) return;
+    if (!rle_data || !out_buffer) return;
 
-    int anim_width = current_anim_.width;
-    
-    for (int dy = 0; dy < diff->height; dy++) {
-        for (int dx = 0; dx < diff->width; dx++) {
-            int bit_index = dy * diff->width + dx;
-            int byte_index = bit_index / 8;
-            int bit_offset = 7 - (bit_index % 8); // MSB first
-            
-            bool is_white = (diff->data[byte_index] >> bit_offset) & 1;
-            
-            int px = diff->x + dx;
-            int py = diff->y + dy;
-            
-            if (px >= 0 && px < anim_width && py >= 0 && py < current_anim_.height) {
-                // Update packed frame bit
-                int target_bit = py * anim_width + px;
-                int target_byte = target_bit / 8;
-                int target_offset = 7 - (target_bit % 8);
-                
-                if (is_white) {
-                    packed_frame_[target_byte] |= (1u << target_offset);
-                } else {
-                    packed_frame_[target_byte] &= ~(1u << target_offset);
-                }
+    int w = current_anim_.width;
+    int h = current_anim_.height;
+    int start_pixel = start_y * w;
+    int end_pixel = (start_y + num_rows) * w;
+    if (end_pixel > w * h) end_pixel = w * h;
+
+    const uint8_t* src = rle_data;
+    int px = 0;  // Current pixel index in frame
+    int out_idx = 0;  // Output buffer index
+
+    // RLE decode: [count, value] (2-bit grayscale, 4 levels)
+    while (px < w * h) {
+        uint8_t count = *src++;
+        uint8_t value = *src++;
+        if (count == 0) break;
+
+        uint8_t gray2 = value & 0x03; // 2-bit value (0-3)
+        uint8_t gray = gray2 * 85; // 0, 85, 170, 255
+        uint16_t color = ((gray >> 3) << 11) | ((gray >> 2) << 5) | (gray >> 3); // RGB565
+
+        for (uint8_t i = 0; i < count && px < end_pixel; i++, px++) {
+            if (px >= start_pixel) {
+                out_buffer[out_idx++] = color;
             }
         }
+        if (px >= end_pixel) break;
     }
+}
+
+void AnimationPlayer::decodeFullRLEFrame(const asset::emotion::DiffBlock* block)
+{
+    // Deprecated - no longer used
+}
+
+void AnimationPlayer::applyDiffBlock(const asset::emotion::DiffBlock* diff)
+{
+    // Deprecated - no longer used
 }
 
 void AnimationPlayer::render()
 {
-    if (!playing_ || !fb_ || !current_anim_.valid() || !packed_frame_ || !scanline_buffer_) 
+    if (!playing_ || !drv_ || !current_anim_.valid() || !scanline_buffer_) 
         return;
+
+    // Get current frame's RLE data
+    const asset::emotion::FrameInfo& frame_info = current_anim_.frames[frame_index_];
+    if (!frame_info.diff || !frame_info.diff->data) return;
 
     int w = current_anim_.width;
     int h = current_anim_.height;
 
-    // Render scanline-by-scanline into Framebuffer (no direct LCD writes)
-    // DisplayManager will call drv_->flush(fb) once per frame → no flickering
+    // Set window once for entire animation frame
+    drv_->setWindow(pos_x_, pos_y_, pos_x_ + w - 1, pos_y_ + h - 1);
+
+    // Stream scanline-by-scanline: decode RLE directly to RGB565 and write
     for (int y = 0; y < h; y += SCANLINE_ROWS) {
         int rows_in_batch = (y + SCANLINE_ROWS > h) ? (h - y) : SCANLINE_ROWS;
         
-        // Decode batch of rows from packed_frame_ into scanline_buffer_
-        for (int row = 0; row < rows_in_batch; row++) {
-            int py = y + row;
-            for (int x = 0; x < w; x++) {
-                int bit_index = py * w + x;
-                int byte_index = bit_index / 8;
-                int bit_offset = 7 - (bit_index % 8);
-                bool is_white = (packed_frame_[byte_index] >> bit_offset) & 1;
-                scanline_buffer_[row * w + x] = is_white ? COLOR_WHITE : COLOR_BLACK;
-            }
-        }
+        // Decode this scanline batch from RLE directly to RGB565
+        decodeRLEScanline(frame_info.diff->data, y, rows_in_batch, scanline_buffer_);
 
-        // Draw scanline batch into Framebuffer
-        fb_->drawBitmap(pos_x_, pos_y_ + y, w, rows_in_batch, scanline_buffer_);
+        // Write scanline batch directly to display (no framebuffer!)
+        drv_->writePixels(scanline_buffer_, w * rows_in_batch * sizeof(uint16_t));
     }
 }

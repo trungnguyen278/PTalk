@@ -4,7 +4,6 @@
 #include <vector>
 #include <string>
 #include <memory>
-#include "Framebuffer.hpp"
 
 // Forward declare emotion types
 namespace asset { namespace emotion {
@@ -25,6 +24,7 @@ struct Animation1Bit {
     int frame_count = 0;
     uint16_t fps = 20;
     bool loop = true;
+    int max_packed_size = 0;                                // Max bytes for largest diff block
     const uint8_t* base_frame = nullptr;                    // Frame 0 full 1-bit bitmap
     const asset::emotion::FrameInfo* frames = nullptr;       // Array of frame infos
 
@@ -49,7 +49,7 @@ struct Animation1Bit {
 
 class AnimationPlayer {
 public:
-    AnimationPlayer(Framebuffer* fb, class DisplayDriver* drv);
+    AnimationPlayer(class DisplayDriver* drv);
     ~AnimationPlayer();
 
     // Set animation mới (1-bit format)
@@ -66,32 +66,31 @@ public:
     // Update theo thời gian (ms)
     void update(uint32_t dt_ms);
 
-    // Vẽ frame hiện tại vào framebuffer
+    // Render frame directly to display (no framebuffer needed)
     void render();
 
 private:
-    // Decode 1-bit packed data to RGB565 working buffer
-    void decode1BitToRGB565(const uint8_t* packed_data, int width, int height);
+    // Decode RLE directly to RGB565 scanline buffer (no intermediate packed buffer)
+    void decodeRLEScanline(const uint8_t* rle_data, int start_y, int num_rows, uint16_t* out_buffer);
     
-    // Apply diff block to current working buffer
+    // Deprecated functions (kept for compatibility)
+    void decode1BitToRGB565(const uint8_t* packed_data, int width, int height);
+    void decodeFullRLEFrame(const asset::emotion::DiffBlock* block);
     void applyDiffBlock(const asset::emotion::DiffBlock* diff);
 
-    Framebuffer* fb_ = nullptr;
     DisplayDriver* drv_ = nullptr;
 
     Animation1Bit current_anim_;
     int pos_x_ = 0;
     int pos_y_ = 0;
 
-    // Streaming scanline buffer: decode+render hàng một
-    // (8 rows × width pixels × 2 bytes/pixel = 8 × 240 × 2 = 3840 bytes max)
+    // Streaming scanline buffer: decode RLE directly to RGB565 scanline
+    // (8 rows × width pixels × 2 bytes/pixel = 8 × 320 × 2 = 5120 bytes max)
     static constexpr int SCANLINE_ROWS = 8;
     uint16_t* scanline_buffer_ = nullptr;
     size_t scanline_buf_size_ = 0;
 
-    // Packed 1-bit frame buffer (not decoded; only ~6–8 KB)
-    uint8_t* packed_frame_ = nullptr;
-    size_t packed_frame_size_ = 0;
+    // No packed frame buffer needed - decode RLE directly to scanline!
 
     uint32_t frame_timer_ = 0;   // tăng theo dt
     uint32_t frame_interval_ = 50; // ms/frame (20 fps)
