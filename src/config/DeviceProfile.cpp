@@ -24,6 +24,9 @@
 // ===== Codec =====
 #include "AdpcmCodec.hpp"
 
+#include "nvs_flash.h"
+#include "nvs.h"
+
 // ===== Assets =====
 // Uncomment sau khi convert assets bằng scripts/convert_assets.py
 // Ví dụ: python scripts/convert_assets.py icon wifi_ok.png src/assets/icons/
@@ -42,14 +45,73 @@
 #include "../assets/emotions/happy.hpp"
 #include "../assets/emotions/sad.hpp"
 #include "../assets/emotions/thinking.hpp"
+#include "../assets/emotions/stun.hpp"
 // #include "assets/emotions/speaking.hpp"
 // #include "assets/emotions/error.hpp"
 // #include "assets/emotions/boot.hpp"
 // #include "assets/emotions/lowbat.hpp"
 
 #include "esp_log.h"
+#include <esp_attr.h>
 
 static const char *TAG = "DeviceProfile";
+
+// Helper function to register emotions (extracted to reduce code size in setup())
+static void registerEmotions(DisplayManager* display)
+{
+    // Register happy emotion
+    {
+        Animation1Bit anim1bit;
+        anim1bit.width = asset::emotion::HAPPY.width;
+        anim1bit.height = asset::emotion::HAPPY.height;
+        anim1bit.frame_count = asset::emotion::HAPPY.frame_count;
+        anim1bit.fps = asset::emotion::HAPPY.fps;
+        anim1bit.loop = asset::emotion::HAPPY.loop;
+        // Frame 0 is diff from black → no base_frame
+        anim1bit.base_frame = nullptr;
+        anim1bit.frames = asset::emotion::HAPPY.frames();
+        display->registerEmotion("happy", anim1bit);
+    }
+    
+    // Register sad emotion
+    {
+        Animation1Bit anim1bit;
+        anim1bit.width = asset::emotion::SAD.width;
+        anim1bit.height = asset::emotion::SAD.height;
+        anim1bit.frame_count = asset::emotion::SAD.frame_count;
+        anim1bit.fps = asset::emotion::SAD.fps;
+        anim1bit.loop = asset::emotion::SAD.loop;
+        anim1bit.base_frame = nullptr;
+        anim1bit.frames = asset::emotion::SAD.frames();
+        display->registerEmotion("sad", anim1bit);
+    }
+    
+    // Register thinking emotion
+    {
+        Animation1Bit anim1bit;
+        anim1bit.width = asset::emotion::THINKING.width;
+        anim1bit.height = asset::emotion::THINKING.height;
+        anim1bit.frame_count = asset::emotion::THINKING.frame_count;
+        anim1bit.fps = asset::emotion::THINKING.fps;
+        anim1bit.loop = asset::emotion::THINKING.loop;
+        anim1bit.base_frame = nullptr;
+        anim1bit.frames = asset::emotion::THINKING.frames();
+        display->registerEmotion("thinking", anim1bit);
+    }
+
+    // Register stun emotion
+    {
+        Animation1Bit anim1bit;
+        anim1bit.width = asset::emotion::STUN.width;
+        anim1bit.height = asset::emotion::STUN.height;
+        anim1bit.frame_count = asset::emotion::STUN.frame_count;
+        anim1bit.fps = asset::emotion::STUN.fps;
+        anim1bit.loop = asset::emotion::STUN.loop;
+        anim1bit.base_frame = nullptr;
+        anim1bit.frames = asset::emotion::STUN.frames();
+        display->registerEmotion("stun", anim1bit);
+    }
+}
 
 // Centralized hardware/config values for easy tweaking
 namespace device_cfg
@@ -80,14 +142,76 @@ namespace device_cfg
     constexpr DisplayPins display{};
 }
 
+// =================================================================================
+// User-configurable settings (loaded from NVS namespace "usercfg")
+// =================================================================================
+namespace user_cfg
+{
+    struct UserSettings
+    {
+        std::string device_name = "PTalk";
+        uint8_t volume = 30;       // 0-100 %
+        uint8_t brightness = 100;   // 0-100 %
+        std::string wifi_ssid;
+        std::string wifi_pass;
+    };
+
+    static std::string get_string(nvs_handle_t h, const char *key)
+    {
+        size_t required = 0;
+        if (nvs_get_str(h, key, nullptr, &required) != ESP_OK || required == 0)
+            return {};
+        std::string tmp;
+        tmp.resize(required);
+        if (nvs_get_str(h, key, tmp.data(), &required) != ESP_OK)
+            return {};
+        if (!tmp.empty() && tmp.back() == '\0') tmp.pop_back();
+        return tmp;
+    }
+
+    static uint8_t get_u8(nvs_handle_t h, const char *key, uint8_t def_val)
+    {
+        uint8_t v = def_val;
+        nvs_get_u8(h, key, &v);
+        return v;
+    }
+
+    static UserSettings load()
+    {
+        UserSettings cfg;
+        nvs_handle_t h;
+        esp_err_t err = nvs_open("usercfg", NVS_READONLY, &h);
+        if (err != ESP_OK)
+        {
+            ESP_LOGI(TAG, "usercfg not found, using defaults");
+            return cfg;
+        }
+
+        cfg.device_name = get_string(h, "device_name");
+        if (cfg.device_name.empty()) cfg.device_name = "PTalk";
+
+        cfg.wifi_ssid = get_string(h, "wifi_ssid");
+        cfg.wifi_pass = get_string(h, "wifi_pass");
+
+        cfg.volume = get_u8(h, "volume", cfg.volume);
+        cfg.brightness = get_u8(h, "brightness", cfg.brightness);
+
+        nvs_close(h);
+        return cfg;
+    }
+}
+
 bool DeviceProfile::setup(AppController &app)
 {
     ESP_LOGI(TAG, "DeviceProfile setup begin");
 
+    // Load user-overridable settings (from NVS) and merge with factory defaults
+    user_cfg::UserSettings user = user_cfg::load();
+
     // =========================================================
     // 1️⃣ DISPLAY
     // =========================================================
-    auto display = std::make_unique<DisplayManager>();
+    auto display_mgr = std::make_unique<DisplayManager>();
 
     // --- Display driver config (ST7789 240x240) ---
     DisplayDriver::Config lcd_cfg{
@@ -112,41 +236,21 @@ bool DeviceProfile::setup(AppController &app)
         return false;
     }
 
-    if (!display->init(std::move(lcd_driver), 240, 240))
+    if (!display_mgr->init(std::move(lcd_driver), 240, 240))
     {
         ESP_LOGE(TAG, "DisplayManager init failed");
         return false;
     }
 
     // Auto-bind UI to state changes so animations/icons update reactively
-    display->enableStateBinding(true);
+    display_mgr->enableStateBinding(true);
+
+    // Apply user brightness preference (0-100%)
+    display_mgr->setBrightness(user.brightness);
 
     // --- Register UI assets ---
-    // Convert generated animation structs to Animation1Bit format
-    
-    // Helper lambda to convert
-    auto registerEmotion1Bit = [&](const char* name, const asset::emotion::Animation& anim) {
-        Animation1Bit anim1bit;
-        anim1bit.width = anim.width;
-        anim1bit.height = anim.height;
-        anim1bit.frame_count = anim.frame_count;
-        anim1bit.fps = anim.fps;
-        anim1bit.loop = anim.loop;
-        anim1bit.base_frame = anim.base_frame();
-        anim1bit.frames = anim.frames();
-        display->registerEmotion(name, anim1bit);
-    };
-
     // Emotions (animations)
-    // registerEmotion1Bit("idle",        asset::emotion::IDLE);
-    // registerEmotion1Bit("listening",   asset::emotion::LISTENING);
-    registerEmotion1Bit("happy",       asset::emotion::HAPPY);
-    registerEmotion1Bit("sad",         asset::emotion::SAD);
-    registerEmotion1Bit("thinking",    asset::emotion::THINKING);
-    // registerEmotion1Bit("speaking",    asset::emotion::SPEAKING);
-    // registerEmotion1Bit("error",       asset::emotion::ERROR);
-    // registerEmotion1Bit("boot",        asset::emotion::BOOT);
-    // registerEmotion1Bit("lowbat",      asset::emotion::LOWBAT);
+    registerEmotions(display_mgr.get());
 
     // Icons (static images)
     // display->registerIcon("wifi_ok",         asset::icon::WIFI_OK);
@@ -155,7 +259,7 @@ bool DeviceProfile::setup(AppController &app)
     // display->registerIcon("battery_low",     asset::icon::BATTERY_LOW);
     // display->registerIcon("battery_charge",  asset::icon::BATTERY_CHARGE);
     // display->registerIcon("battery_full",    asset::icon::BATTERY_FULL);
-    display->registerIcon(
+    display_mgr->registerIcon(
         "battery_critical",
         DisplayManager::Icon{
             asset::icon::CRITICAL_POWER.w,
@@ -165,7 +269,7 @@ bool DeviceProfile::setup(AppController &app)
     // =========================================================
     // 2️⃣ AUDIO
     // =========================================================
-    auto audio = std::make_unique<AudioManager>();
+    auto audio_mgr = std::make_unique<AudioManager>();
 
     // --- Mic: INMP441 ---
     I2SAudioInput_INMP441::Config mic_cfg{
@@ -187,26 +291,29 @@ bool DeviceProfile::setup(AppController &app)
 
     auto speaker = std::make_unique<I2SAudioOutput_MAX98357>(spk_cfg);
 
+    // Apply user volume preference (0-100%)
+    speaker->setVolume(user.volume);
+
     // --- Codec ---
     auto codec = std::make_unique<AdpcmCodec>();
 
     // Wire dependencies into AudioManager before init/start
-    audio->setInput(std::move(mic));
-    audio->setOutput(std::move(speaker));
-    audio->setCodec(std::move(codec));
+    audio_mgr->setInput(std::move(mic));
+    audio_mgr->setOutput(std::move(speaker));
+    audio_mgr->setCodec(std::move(codec));
 
-    if (!audio->init())
+    if (!audio_mgr->init())
     {
         ESP_LOGE(TAG, "AudioManager init failed");
         return false;
     }
 
-    audio->start();
+    audio_mgr->start();
 
     // =========================================================
     // 3️⃣ NETWORK
     // =========================================================
-    auto network = std::make_unique<NetworkManager>();
+    auto network_mgr = std::make_unique<NetworkManager>();
 
     // Configure captive portal and WebSocket server endpoint here
     NetworkManager::Config net_cfg{};
@@ -216,22 +323,28 @@ bool DeviceProfile::setup(AppController &app)
     // Đặt địa chỉ IP và port của WebSocket server (ví dụ: 192.168.1.100:8080)
     // Thêm path nếu server yêu cầu, ví dụ: ws://192.168.1.100:8080/ws
     // Uvicorn/FastAPI thường khai báo endpoint WebSocket tại "/ws".
-    net_cfg.ws_url = "ws://10.170.75.68:8080/ws";
+    net_cfg.ws_url = "ws://10.170.75.137:8080/ws";
 
-    if (!network->init(net_cfg))
+    if (!network_mgr->init(net_cfg))
     {
         ESP_LOGE(TAG, "NetworkManager init failed");
         return false;
     }
 
+    // If user provided Wi-Fi credentials in user settings, try them first
+    if (!user.wifi_ssid.empty())
+    {
+        network_mgr->setCredentials(user.wifi_ssid, user.wifi_pass);
+    }
+
     // --- Network → Audio wiring ---
     // Push incoming binary (ADPCM) from WS into speaker ringbuffer
     // and drive InteractionState to SPEAKING while audio is arriving.
-    StreamBufferHandle_t spk_sb = audio->getSpeakerEncodedBuffer();
-    AudioManager *audio_ptr = audio.get();       // Capture pointer for disconnect handler
-    NetworkManager *network_ptr = network.get(); // For session flag access
+    StreamBufferHandle_t spk_sb = audio_mgr->getSpeakerEncodedBuffer();
+    AudioManager *audio_ptr = audio_mgr.get();       // Capture pointer for disconnect handler
+    NetworkManager *network_ptr = network_mgr.get(); // For session flag access
 
-    network->onServerBinary([spk_sb, network_ptr](const uint8_t *data, size_t len)
+    network_mgr->onServerBinary([spk_sb, network_ptr](const uint8_t *data, size_t len)
                             {
         if (!data || len == 0) return;
         // Feed encoded data to AudioManager's downlink buffer
@@ -252,7 +365,7 @@ bool DeviceProfile::setup(AppController &app)
         } });
 
     // Handle WS disconnect - must cleanup to unblock speaker task
-    network->onDisconnect([spk_sb, audio_ptr]()
+    network_mgr->onDisconnect([spk_sb, audio_ptr]()
                           {
         auto& sm = StateManager::instance();
         auto current_state = sm.getInteractionState();
@@ -269,7 +382,7 @@ bool DeviceProfile::setup(AppController &app)
         } });
 
     // Optionally react to simple text control messages from server
-    network->onServerText([network_ptr](const std::string &msg)
+    network_mgr->onServerText([network_ptr](const std::string &msg)
                           {
         auto& sm = StateManager::instance();
         if (msg == "PROCESSING_START" || msg == "PROCESSING") {
@@ -307,20 +420,20 @@ bool DeviceProfile::setup(AppController &app)
     // =========================================================
     // 4️⃣ TOUCH INPUT
     // =========================================================
-    auto touch = std::make_unique<TouchInput>();
+    auto touch_input = std::make_unique<TouchInput>();
 
     TouchInput::Config touch_cfg{
         .pin = GPIO_NUM_0,
         .active_low = true,
         .long_press_ms = 1200};
 
-    if (!touch->init(touch_cfg))
+    if (!touch_input->init(touch_cfg))
     {
         ESP_LOGE(TAG, "TouchInput init failed");
         return false;
     }
 
-    touch->onEvent([&app](TouchInput::Event e)
+    touch_input->onEvent([&app](TouchInput::Event e)
                    {
         if (e == TouchInput::Event::PRESS) {
             app.postEvent(event::AppEvent::USER_BUTTON);
@@ -348,10 +461,10 @@ bool DeviceProfile::setup(AppController &app)
         device_cfg::power.r1_ohm,
         device_cfg::power.r2_ohm);
 
-    auto power = std::make_unique<PowerManager>(std::move(power_driver), power_cfg);
+    auto power_mgr = std::make_unique<PowerManager>(std::move(power_driver), power_cfg);
 
     // Link PowerManager → DisplayManager for battery % updates
-    power->setDisplayManager(display.get());
+    power_mgr->setDisplayManager(display_mgr.get());
 
     // App-level power behavior (deep sleep re-check interval)
     AppController::Config app_cfg{};
@@ -366,11 +479,11 @@ bool DeviceProfile::setup(AppController &app)
     // 7️⃣ ATTACH MODULES → APP CONTROLLER
     // =========================================================
     app.attachModules(
-        std::move(display),
-        std::move(audio),
-        std::move(network),
-        std::move(power),
-        std::move(touch),
+        std::move(display_mgr),
+        std::move(audio_mgr),
+        std::move(network_mgr),
+        std::move(power_mgr),
+        std::move(touch_input),
         std::move(ota));
 
     // Apply app-level configuration (deep sleep interval, etc.)
