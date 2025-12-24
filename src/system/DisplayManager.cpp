@@ -180,6 +180,13 @@ void DisplayManager::setBacklight(bool on)
     }
 }
 
+void DisplayManager::setBrightness(uint8_t percent)
+{
+    if (drv) {
+        drv->setBacklightLevel(percent);
+    }
+}
+
 // ----------------------------------------------------------------------------
 // Asset registration
 // ----------------------------------------------------------------------------
@@ -328,6 +335,7 @@ void DisplayManager::handleConnectivity(state::ConnectivityState s)
             break;
 
         case state::ConnectivityState::CONNECTING_WS:
+            playEmotion("stun");
             break;
 
         case state::ConnectivityState::ONLINE:

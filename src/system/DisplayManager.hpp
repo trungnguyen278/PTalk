@@ -125,6 +125,7 @@ public:
 
     // Backlight control passthrough
     void setBacklight(bool on);
+    void setBrightness(uint8_t percent);
 
     // --- Asset Registration ---------------------------------------------------
     void registerEmotion(const std::string& name, const Animation1Bit& anim);
