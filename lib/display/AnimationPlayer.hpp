@@ -86,7 +86,7 @@ private:
 
     // Streaming scanline buffer: decode RLE directly to RGB565 scanline
     // (8 rows × width pixels × 2 bytes/pixel = 8 × 320 × 2 = 5120 bytes max)
-    static constexpr int SCANLINE_ROWS = 8;
+    static constexpr int SCANLINE_ROWS = 16;
     uint16_t* scanline_buffer_ = nullptr;
     size_t scanline_buf_size_ = 0;
 
