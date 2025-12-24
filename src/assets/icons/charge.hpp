@@ -9,6 +9,6 @@ struct Icon {
     const uint8_t* rle_data;
 };
 
-extern const Icon CRITICAL_POWER;
+extern const Icon CHARGE;
 
 } // namespace asset::icon
