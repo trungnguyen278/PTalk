@@ -9,7 +9,7 @@ import io
 # To convert a PNG icon:
 #   python scripts/convert_assets.py icon path/to/icon.png output/directory --width 64 --height 64
 # To convert a GIF emotion:
-#   python scripts/convert_assets.py emotion path/to/emotion.gif output/directory --width 128 --height 128 --fps 20 --loop
+#   python scripts/convert_assets.py emotion path/to/emotion.gif output/directory --width 128 --height 128 --fps 10 --loop
 
 
 # ============================================================
@@ -161,8 +161,9 @@ def compute_pixel_diff(prev_pixels: List[int], curr_pixels: List[int], w: int, h
         'data': packed
     }]
 
-def convert_emotion(gif_path, out_dir, target_w=None, target_h=None, fps=20, loop=True):
-    name = os.path.splitext(os.path.basename(gif_path))[0].upper()
+def convert_emotion(gif_path, out_dir, target_w=None, target_h=None, fps=10, loop=True):
+    name_upper = os.path.splitext(os.path.basename(gif_path))[0].upper()
+    name_lower = name_upper.lower()
     img = Image.open(gif_path)
 
     frames_pixels = []
@@ -177,96 +178,97 @@ def convert_emotion(gif_path, out_dir, target_w=None, target_h=None, fps=20, loo
 
     frame_count = len(frames_pixels)
     
-    # Pack frame 0 into bytes (8 pixels per byte)
-    bits_frame0 = frames_pixels[0]
-    packed_frame0 = []
-    for i in range(0, len(bits_frame0), 8):
-        byte = 0
-        for j in range(8):
-            if i + j < len(bits_frame0) and bits_frame0[i + j]:
-                byte |= (1 << (7 - j))
-        packed_frame0.append(byte)
+    # Create black screen (all pixels = 0) for frame 0 diff
+    black_screen = [0] * (w * h)
 
-    out_path = os.path.join(out_dir, f"{name.lower()}.hpp")
-    with open(out_path, "w", encoding="utf-8") as f:
+    # We'll emit a lightweight header (.hpp) with only the Animation declaration
+    # and put the heavy byte data into a companion .cpp file to avoid huge headers.
+    out_hpp = os.path.join(out_dir, f"{name_lower}.hpp")
+    out_cpp = os.path.join(out_dir, f"{name_lower}.cpp")
+
+    # Gather diff data for all frames to reuse across hpp/cpp writing
+    diff_data = []
+    total_size = 0
+    total_diff_blocks = 0
+
+    # Frame 0: diff from black screen
+    diff0 = compute_pixel_diff(black_screen, frames_pixels[0], w, h)
+    diff_data.append(diff0)
+    if len(diff0):
+        total_diff_blocks += len(diff0)
+        for block in diff0:
+            total_size += 4 + len(block['data'])  # x,y,w,h + data
+
+    # Frames 1+: diff from previous frame
+    for idx in range(1, frame_count):
+        diff = compute_pixel_diff(frames_pixels[idx - 1], frames_pixels[idx], w, h)
+        diff_data.append(diff)
+        if len(diff):
+            total_diff_blocks += len(diff)
+            for block in diff:
+                total_size += 4 + len(block['data'])
+
+    # =====================
+    # Write header (.hpp)
+    # =====================
+    with open(out_hpp, "w", encoding="utf-8") as f:
         write_header_guard(f)
-        f.write(f"namespace asset::emotion {{\n\n")
+        f.write("namespace asset::emotion {\n\n")
+        f.write(f"extern const Animation {name_upper};\n\n")
+        f.write("} // namespace asset::emotion\n")
 
-        # Frame 0: Full frame (packed 1-bit)
-        f.write(f"// Frame 0: Full 1-bit bitmap ({len(packed_frame0)} bytes, {w}x{h})\n")
-        f.write(f"const uint8_t {name}_FRAME0[{len(packed_frame0)}] = {{\n")
-        for i, byte in enumerate(packed_frame0):
-            f.write(f"0x{byte:02X},")
-            if (i + 1) % 16 == 0:
-                f.write("\n")
-        f.write("\n};\n\n")
+    # =====================
+    # Write implementation (.cpp)
+    # =====================
+    with open(out_cpp, "w", encoding="utf-8") as f:
+        f.write(f"#include \"{name_lower}.hpp\"\n\n")
+        f.write("namespace asset::emotion {\n\n")
 
-        total_size = len(packed_frame0)
-        total_diff_blocks = 0
-
-        # Frames 1+: Block-level diff
-        diff_data = []
-        for idx in range(1, frame_count):
-            diff = compute_pixel_diff(frames_pixels[idx - 1], frames_pixels[idx], w, h)
-            diff_data.append(diff)
-            
+        # Emit frame data arrays and DiffBlocks
+        for idx, diff in enumerate(diff_data):
             if len(diff) == 0:
                 f.write(f"// Frame {idx}: No changes\n\n")
-            else:
-                total_diff_blocks += len(diff)
-                
-                for block_idx, block in enumerate(diff):
-                    data_len = len(block['data'])
-                    f.write(f"// Frame {idx}: Diff block at ({block['x']},{block['y']}) size {block['width']}x{block['height']}\n")
-                    f.write(f"const uint8_t {name}_FRAME{idx}_DATA[{data_len}] = {{\n")
-                    for i, byte in enumerate(block['data']):
-                        f.write(f"0x{byte:02X},")
-                        if (i + 1) % 16 == 0:
-                            f.write("\n")
-                    f.write("\n};\n")
-                    
-                    total_size += 4 + data_len  # x,y,w,h + data
-                
-                f.write(f"const DiffBlock {name}_FRAME{idx}_DIFF = {{\n")
-                f.write(f"    {diff[0]['x']}, {diff[0]['y']},\n")
-                f.write(f"    {diff[0]['width']}, {diff[0]['height']},\n")
-                f.write(f"    {name}_FRAME{idx}_DATA\n")
+                continue
+
+            for block_idx, block in enumerate(diff):
+                data_len = len(block['data'])
+                f.write(f"// Frame {idx}: Diff block at ({block['x']},{block['y']}) size {block['width']}x{block['height']}\n")
+                f.write(f"static const uint8_t {name_upper}_FRAME{idx}_DATA[{data_len}] = {{\n")
+                for i, byte in enumerate(block['data']):
+                    f.write(f"0x{byte:02X},")
+                    if (i + 1) % 16 == 0:
+                        f.write("\n")
+                f.write("\n};\n")
+
+                f.write(f"static const DiffBlock {name_upper}_FRAME{idx}_DIFF = {{\n")
+                f.write(f"    {block['x']}, {block['y']},\n")
+                f.write(f"    {block['width']}, {block['height']},\n")
+                f.write(f"    {name_upper}_FRAME{idx}_DATA\n")
                 f.write(f"}};\n\n")
 
-        # Animation metadata
-        f.write(f"// Animation: {w}x{h}, {frame_count} frames\n")
-        f.write(f"// Total size: {total_size} bytes ({total_diff_blocks} diff blocks)\n\n")
-
-        f.write(f"const FrameInfo {name}_FRAMES[{frame_count}] = {{\n")
-        f.write(f"    {{nullptr}},  // Frame 0: full bitmap\n")
-        for idx in range(1, frame_count):
-            if len(diff_data[idx - 1]) == 0:
-                f.write(f"    {{nullptr}},  // Frame {idx}: no change\n")
+        # FrameInfo array
+        f.write(f"static const FrameInfo {name_upper}_FRAMES[{frame_count}] = {{\n")
+        for idx, diff in enumerate(diff_data):
+            if len(diff) == 0:
+                f.write("    {nullptr},\n")
             else:
-                f.write(f"    {{&{name}_FRAME{idx}_DIFF}},\n")
-        f.write(f"}};\n\n")
+                f.write(f"    {{&{name_upper}_FRAME{idx}_DIFF}},\n")
+        f.write("};\n\n")
 
-        # Create animation instance using static variables
-        f.write(f"// Animation instance: {name}\n")
-        f.write(f"constexpr int {name}_WIDTH = {w};\n")
-        f.write(f"constexpr int {name}_HEIGHT = {h};\n")
-        f.write(f"constexpr int {name}_FRAME_COUNT = {frame_count};\n")
-        f.write(f"constexpr int {name}_FPS = {fps};\n")
-        f.write(f"constexpr bool {name}_LOOP = {'true' if loop else 'false'};\n\n")
-        
-        f.write(f"const Animation {name} = {{\n")
-        f.write(f"    {name}_WIDTH,\n")
-        f.write(f"    {name}_HEIGHT,\n")
-        f.write(f"    {name}_FRAME_COUNT,\n")
-        f.write(f"    {name}_FPS,\n")
-        f.write(f"    {name}_LOOP,\n")
-        f.write(f"    []() {{ return {name}_FRAME0; }},\n")
-        f.write(f"    []() {{ return {name}_FRAMES; }}\n")
-        f.write(f"}};\n\n")
+        # Animation instance
+        f.write(f"const Animation {name_upper} = {{\n")
+        f.write(f"    {w},\n")
+        f.write(f"    {h},\n")
+        f.write(f"    {frame_count},\n")
+        f.write(f"    {fps},\n")
+        f.write(f"    {'true' if loop else 'false'},\n")
+        f.write(f"    nullptr,  // no packed full frame; frame0 is diff from black\n")
+        f.write(f"    []() {{ return {name_upper}_FRAMES; }}\n")
+        f.write("};\n\n")
 
         f.write("} // namespace asset::emotion\n")
 
-    print(f"[EMOTION] {out_path} → {w}x{h}, {frame_count} frames, {total_size} bytes")
+    print(f"[EMOTION] {out_hpp} (+cpp) → {w}x{h}, {frame_count} frames, {total_size} bytes, {total_diff_blocks} diff blocks")
 
 # ============================================================
 # MAIN
@@ -295,7 +297,7 @@ def parse_args():
     emo_p.add_argument("output_dir", help="Output directory for generated header")
     emo_p.add_argument("--width", type=int, default=None, help="Force width (preserve aspect if height unset)")
     emo_p.add_argument("--height", type=int, default=None, help="Force height (preserve aspect if width unset)")
-    emo_p.add_argument("--fps", type=int, default=20, help="Frames per second")
+    emo_p.add_argument("--fps", type=int, default=10, help="Frames per second")
     emo_p.add_argument(
         "--loop",
         action=argparse.BooleanOptionalAction,
