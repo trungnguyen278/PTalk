@@ -424,9 +424,9 @@ void DisplayManager::handlePower(state::PowerState s)
         playIcon("battery_full", IconPlacement::Custom, width_ - 185, 0);
         break;
 
-    case state::PowerState::POWER_SAVING:
-        setPowerSaveMode(true);
-        break;
+    // case state::PowerState::POWER_SAVING:
+    //     setPowerSaveMode(true);
+    //     break;
 
     case state::PowerState::CRITICAL:
         ESP_LOGI(TAG, "CRITICAL: show critical battery icon");
