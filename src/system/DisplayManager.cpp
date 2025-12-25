@@ -463,7 +463,7 @@ void DisplayManager::handleEmotion(state::EmotionState s)
     case state::EmotionState::EXCITED:
     case state::EmotionState::ANGRY:
     default:
-        // playEmotion("idle");
+        playEmotion("idle");
         break;
     }
 }

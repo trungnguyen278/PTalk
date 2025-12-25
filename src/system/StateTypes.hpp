@@ -45,7 +45,7 @@ namespace state
         // LOW_BATTERY,
         CHARGING,
         FULL_BATTERY,
-        POWER_SAVING, // dim display / disable speaker
+        // POWER_SAVING, // dim display / disable speaker
         CRITICAL,     // force shutdown
         ERROR         // battery disconnected / fault
     };

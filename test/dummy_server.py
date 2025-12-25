@@ -19,7 +19,7 @@ BURST_FRAMES = 20             # Send initial burst to fill buffer
 PACE_SEC = 0.002              # 2ms pacing - fast enough to keep buffer full
 
 RECV_MIC_SECONDS = 1.0
-RESPONSE_FILENAME = "output_1762933136.wav"
+RESPONSE_FILENAME = "chẳng-phải-tình-đầu-sao-đau-đến-thế.wav"
 
 INPUT_FOLDER = "input"
 OUTPUT_FOLDER = "output"

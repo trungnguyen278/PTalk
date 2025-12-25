@@ -36,12 +36,12 @@
 // #include "assets/icons/wifi_fail.hpp"
 // #include "assets/icons/battery.hpp"
 // #include "assets/icons/battery_low.hpp"
-#include "assets/icons/battery_charge.hpp"
-#include "assets/icons/battery_full.hpp"
-#include "assets/icons/critical_power.hpp"
+#include "../assets/icons/battery_charge.hpp"
+#include "../assets/icons/battery_full.hpp"
+#include "../assets/icons/critical_power.hpp"
 //
-// #include "assets/emotions/idle.hpp"
-// #include "assets/emotions/listening.hpp"
+#include "../assets/emotions/idle.hpp"
+#include "../assets/emotions/listening.hpp"
 #include "../assets/emotions/happy.hpp"
 #include "../assets/emotions/sad.hpp"
 #include "../assets/emotions/thinking.hpp"
@@ -59,6 +59,34 @@ static const char *TAG = "DeviceProfile";
 // Helper function to register emotions (extracted to reduce code size in setup())
 static void registerEmotions(DisplayManager *display)
 {
+    // Register idle emotion
+    {
+        Animation1Bit anim1bit;
+        anim1bit.width = asset::emotion::IDLE.width;
+        anim1bit.height = asset::emotion::IDLE.height;
+        anim1bit.frame_count = asset::emotion::IDLE.frame_count;
+        anim1bit.fps = asset::emotion::IDLE.fps;
+        anim1bit.loop = asset::emotion::IDLE.loop;
+        anim1bit.max_packed_size = asset::emotion::IDLE.max_packed_size;
+        // Frame 0 is diff from black → no base_frame
+        anim1bit.base_frame = nullptr;
+        anim1bit.frames = asset::emotion::IDLE.frames();
+        display->registerEmotion("idle", anim1bit);
+    }
+    // Register listening emotion
+    {
+        Animation1Bit anim1bit;
+        anim1bit.width = asset::emotion::LISTENING.width;
+        anim1bit.height = asset::emotion::LISTENING.height;
+        anim1bit.frame_count = asset::emotion::LISTENING.frame_count;
+        anim1bit.fps = asset::emotion::LISTENING.fps;
+        anim1bit.loop = asset::emotion::LISTENING.loop;
+        anim1bit.max_packed_size = asset::emotion::LISTENING.max_packed_size;
+        // Frame 0 is diff from black → no base_frame
+        anim1bit.base_frame = nullptr;
+        anim1bit.frames = asset::emotion::LISTENING.frames();
+        display->registerEmotion("listening", anim1bit);
+    }
     // Register happy emotion
     {
         Animation1Bit anim1bit;
@@ -468,9 +496,9 @@ bool DeviceProfile::setup(AppController &app)
     PowerManager::Config power_cfg{};
     power_cfg.evaluate_interval_ms = 2000; // sample every 2s
     // power_cfg.low_battery_percent = 15.0f; // low battery warning at 15%
-    power_cfg.critical_percent = 5.0f;     // critical battery (auto sleep) at 5%
-    power_cfg.enable_smoothing = true;     // enable smoothing filter
-    power_cfg.smoothing_alpha = 0.15f;     // smoothing factor alpha
+    power_cfg.critical_percent = 5.0f; // critical battery (auto sleep) at 5%
+    power_cfg.enable_smoothing = true; // enable smoothing filter
+    power_cfg.smoothing_alpha = 0.15f; // smoothing factor alpha
 
     // Battery sensing hardware (divider + optional charge/full pins)
     auto power_driver = std::make_unique<Power>(

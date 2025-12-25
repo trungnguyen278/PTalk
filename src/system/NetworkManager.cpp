@@ -387,6 +387,7 @@ void NetworkManager::handleWsTextMessage(const std::string& msg)
         // Don't return - still call on_text_cb for logging/debugging
     }
     
+    
     if (on_text_cb) on_text_cb(msg);
 }
 
