@@ -3,12 +3,15 @@
 
 namespace asset::icon {
 
+#ifndef ICON
+#define ICON
 struct Icon {
     int w;
     int h;
     const uint8_t* rle_data;
 };
+#endif
 
-extern const Icon CHARGE;
+extern const Icon BATTERY_FULL;
 
 } // namespace asset::icon
