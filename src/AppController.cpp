@@ -250,6 +250,28 @@ void AppController::start() {
             network->start();
         }
     }
+    // ---------------------------------------------------------------------
+    // 5) Start AudioManager cuối cùng (cần network để stream)
+    // ---------------------------------------------------------------------
+    if (audio) {
+        auto ps = StateManager::instance().getPowerState();
+        if (/*ps == state::PowerState::LOW_BATTERY || */ps == state::PowerState::CRITICAL) {
+            ESP_LOGW(TAG, "Skipping AudioManager start due to low battery");
+        } else {
+            audio->start();
+        }
+    }
+    // ---------------------------------------------------------------------
+    // 6) TouchInput start
+    // ---------------------------------------------------------------------
+    if (touch) {
+        auto ps = StateManager::instance().getPowerState();
+        if (/*ps == state::PowerState::LOW_BATTERY || */ps == state::PowerState::CRITICAL) {
+            ESP_LOGW(TAG, "Skipping TouchInput start due to low battery");
+        } else {
+            touch->start();
+        }
+    }
 
     ESP_LOGI(TAG, "AppController started");
 }
@@ -603,10 +625,14 @@ void AppController::onPowerStateChanged(state::PowerState s) {
         case state::PowerState::NORMAL:
             if (audio) {
                 // TODO: audio->setPowerSaving(false);
+                audio->start();
             }
             // Khôi phục network nếu trước đó đã dừng
             if (network) {
                 network->start();
+            }
+            if (touch) {
+                touch->start();
             }
             break;
 
@@ -643,6 +669,9 @@ void AppController::onPowerStateChanged(state::PowerState s) {
             if (network) {
                 network->stopPortal();
                 network->stop();
+            }
+            if (touch) {
+                touch->stop();
             }
             // ✅ Auto-sleep on critical battery
             ESP_LOGW(TAG, "Critical battery detected - entering deep sleep");
