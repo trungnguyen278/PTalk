@@ -467,7 +467,7 @@ bool DeviceProfile::setup(AppController &app)
     // Centralize power/deep-sleep thresholds here for easy tuning
     PowerManager::Config power_cfg{};
     power_cfg.evaluate_interval_ms = 2000; // sample every 2s
-    power_cfg.low_battery_percent = 15.0f; // low battery warning at 15%
+    // power_cfg.low_battery_percent = 15.0f; // low battery warning at 15%
     power_cfg.critical_percent = 5.0f;     // critical battery (auto sleep) at 5%
     power_cfg.enable_smoothing = true;     // enable smoothing filter
     power_cfg.smoothing_alpha = 0.15f;     // smoothing factor alpha

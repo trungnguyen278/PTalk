@@ -13,7 +13,7 @@ class PowerManager {
 public:
     struct Config {
         uint32_t evaluate_interval_ms = 2000;
-        float low_battery_percent = 20.0f;
+        // float low_battery_percent = 20.0f;
         float critical_percent = 8.0f;
         bool enable_smoothing = true;
         float smoothing_alpha = 0.15f;

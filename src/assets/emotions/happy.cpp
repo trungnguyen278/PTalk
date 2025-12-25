@@ -3111,7 +3111,7 @@ const Animation HAPPY = {
     320,
     218,
     33,
-    10,
+    20,
     true,
     8720,  // max packed size (1 full frame)
     nullptr,  // no separate base frame

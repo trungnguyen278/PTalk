@@ -136,9 +136,9 @@ state::PowerState PowerManager::evaluateState(float volt,
     }
 
     // LOW battery
-    if (percent <= config.low_battery_percent) {
-        return state::PowerState::LOW_BATTERY;
-    }
+    // if (percent <= config.low_battery_percent) {
+    //     return state::PowerState::LOW_BATTERY;
+    // }
 
     return state::PowerState::NORMAL;
 }

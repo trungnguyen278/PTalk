@@ -42,7 +42,7 @@ namespace state
     enum class PowerState : uint8_t
     {
         NORMAL,
-        LOW_BATTERY,
+        // LOW_BATTERY,
         CHARGING,
         FULL_BATTERY,
         POWER_SAVING, // dim display / disable speaker

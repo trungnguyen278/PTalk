@@ -412,9 +412,9 @@ void DisplayManager::handlePower(state::PowerState s)
         playIcon("battery");
         break;
 
-    case state::PowerState::LOW_BATTERY:
-        playIcon("battery_low");
-        break;
+    // case state::PowerState::LOW_BATTERY:
+    //     playIcon("battery_low");
+    //     break;
 
     case state::PowerState::CHARGING:
         playIcon("battery_charge", IconPlacement::Custom, width_ - 185, 0);

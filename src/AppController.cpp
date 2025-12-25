@@ -244,7 +244,7 @@ void AppController::start() {
     // ---------------------------------------------------------------------
     if (network) {
         auto ps = StateManager::instance().getPowerState();
-        if (ps == state::PowerState::LOW_BATTERY || ps == state::PowerState::CRITICAL) {
+        if (/*ps == state::PowerState::LOW_BATTERY || */ps == state::PowerState::CRITICAL) {
             ESP_LOGW(TAG, "Skipping NetworkManager start due to low battery");
         } else {
             network->start();
@@ -610,16 +610,16 @@ void AppController::onPowerStateChanged(state::PowerState s) {
             }
             break;
 
-        case state::PowerState::LOW_BATTERY:
-            if (audio) {
-                // TODO: audio->limitVolume();
-            }
-            // Dừng mọi task nặng (WS/Portal/STA)
-            if (network) {
-                network->stopPortal();
-                network->stop();
-            }
-            break;
+        // case state::PowerState::LOW_BATTERY:
+        //     if (audio) {
+        //         // TODO: audio->limitVolume();
+        //     }
+        //     // Dừng mọi task nặng (WS/Portal/STA)
+        //     if (network) {
+        //         network->stopPortal();
+        //         network->stop();
+        //     }
+        //     break;
 
         case state::PowerState::CHARGING:
             break;
