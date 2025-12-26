@@ -507,6 +507,7 @@ void DisplayManager::playText(const std::string &text, int x, int y, uint16_t co
     text_color_ = color;
     text_scale_ = scale;
     text_active_ = true;
+    text_mode_cleared_ = false;
     // Stop animation to avoid overwriting text
     anim_player->stop();
 }
