@@ -61,16 +61,32 @@ const char PAGE_HTML_BEFORE_LIST[] = R"rawliteral(
 const char PAGE_HTML_FOOTER[] = R"rawliteral(
         </div>
 
-        <form method='POST' action='/connect'>
-            <label>SSID</label><input id='s' name='ssid' required>
-            <label>Password</label>
-            <div class='password-group'>
-                <input id='p' name='pass' type='password'>
-                <input type='checkbox' class='toggle-checkbox'
-                       onclick='togglePassword()' title='Hiển thị mật khẩu'>
-            </div>
-            <input type='submit' value='KẾT NỐI'>
-        </form>
+        <label>SSID</label>
+        <input id="s" required>
+
+        <label>Password</label>
+        <input id="p" type="password">
+
+        <button onclick="submitWifi()">KẾT NỐI</button>
+
+        <script>
+        function submitWifi() {
+            const ssid = document.getElementById('s').value;
+            const pass = document.getElementById('p').value;
+
+            fetch('/connect', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: 'ssid=' + encodeURIComponent(ssid) +
+                    '&pass=' + encodeURIComponent(pass)
+            }).then(() => {
+                alert('Thiết bị đang kết nối WiFi…');
+            });
+        }
+        </script>
+
     </div>
 </body>
 </html>
