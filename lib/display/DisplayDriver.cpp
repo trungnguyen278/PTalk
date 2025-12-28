@@ -294,12 +294,35 @@ void DisplayDriver::holdBacklightDuringDeepSleep(bool enable)
 // Drawing primitives
 // ----------------------------------------------------------------------------
 
-void DisplayDriver::fillScreen(uint16_t color)
-{
-    if (!initialized)
+void DisplayDriver::fillScreen(uint16_t color, int x, int y, int w, int h)
+{   
+    if(w == -1) w = width_;
+    if(h == -1) h = height_;
+    
+    if (!initialized || w <= 0 || h <= 0)
         return;
 
-    setAddressWindow(0, 0, width_ - 1, height_ - 1);
+    // Giới hạn vùng vẽ nằm trong màn hình để tránh lỗi ghi đè vùng nhớ
+    if (x < 0)
+    {
+        w += x;
+        x = 0;
+    }
+    if (y < 0)
+    {
+        h += y;
+        y = 0;
+    }
+    if (x + w > width_)
+        w = width_ - x;
+    if (y + h > height_)
+        h = height_ - y;
+
+    if (w <= 0 || h <= 0)
+        return;
+
+    // Thiết lập cửa sổ địa chỉ vào vùng cần vẽ
+    setAddressWindow(x, y, x + w - 1, y + h - 1);
     gpio_set_level((gpio_num_t)cfg_.pin_dc, 1); // data
 
     // Allocate line buffer (much smaller than full screen)

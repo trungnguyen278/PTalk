@@ -248,7 +248,7 @@ void DisplayManager::update(uint32_t dt_ms)
         // Only clear once when entering text mode
         if (!text_mode_cleared_)
         {
-            drv->fillScreen(0x0000);
+            drv->fillScreen(0x0000, 0, 22, width_, height_ - 22); // Clear below top bar
             text_mode_cleared_ = true;
         }
         if (!text_msg_.empty())
@@ -326,7 +326,7 @@ void DisplayManager::handleInteraction(state::InteractionState s, state::InputSo
         playEmotion("thinking");
         break;
     case state::InteractionState::SPEAKING:
-        //playEmotion("speaking");
+        // playEmotion("speaking");
         break;
     case state::InteractionState::CANCELLING:
         break;
@@ -412,9 +412,9 @@ void DisplayManager::handlePower(state::PowerState s)
         playIcon("battery");
         break;
 
-    // case state::PowerState::LOW_BATTERY:
-    //     playIcon("battery_low");
-    //     break;
+        // case state::PowerState::LOW_BATTERY:
+        //     playIcon("battery_low");
+        //     break;
 
     case state::PowerState::CHARGING:
         playIcon("battery_charge", IconPlacement::Custom, width_ - 185, 0);
@@ -424,9 +424,9 @@ void DisplayManager::handlePower(state::PowerState s)
         playIcon("battery_full", IconPlacement::Custom, width_ - 185, 0);
         break;
 
-    // case state::PowerState::POWER_SAVING:
-    //     setPowerSaveMode(true);
-    //     break;
+        // case state::PowerState::POWER_SAVING:
+        //     setPowerSaveMode(true);
+        //     break;
 
     case state::PowerState::CRITICAL:
         ESP_LOGI(TAG, "CRITICAL: show critical battery icon");
@@ -459,6 +459,8 @@ void DisplayManager::handleEmotion(state::EmotionState s)
         playEmotion("stun");
         break;
     case state::EmotionState::NEUTRAL:
+        playEmotion("neutral");
+        break;
     case state::EmotionState::CALM:
     case state::EmotionState::EXCITED:
     case state::EmotionState::ANGRY:
