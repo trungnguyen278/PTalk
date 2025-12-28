@@ -12,7 +12,7 @@
 #include "system/StateManager.hpp"
 #include "system/StateTypes.hpp"
 // Ring buffer API to feed downlink audio into AudioManager
-#include "freertos/ringbuf.h"
+// #include "freertos/ringbuf.h"
 
 // ===== Drivers / IO =====
 #include "DisplayDriver.hpp"
@@ -40,6 +40,7 @@
 #include "../assets/icons/battery_full.hpp"
 #include "../assets/icons/critical_power.hpp"
 //
+#include "../assets/emotions/neutral.hpp"
 #include "../assets/emotions/idle.hpp"
 #include "../assets/emotions/listening.hpp"
 #include "../assets/emotions/happy.hpp"
@@ -59,6 +60,21 @@ static const char *TAG = "DeviceProfile";
 // Helper function to register emotions (extracted to reduce code size in setup())
 static void registerEmotions(DisplayManager *display)
 {
+    // Register neutral emotion
+    {
+        Animation1Bit anim1bit;
+        anim1bit.width = asset::emotion::NEUTRAL.width;
+        anim1bit.height = asset::emotion::NEUTRAL.height;
+        anim1bit.frame_count = asset::emotion::NEUTRAL.frame_count;
+        anim1bit.fps = asset::emotion::NEUTRAL.fps;
+        anim1bit.loop = asset::emotion::NEUTRAL.loop;
+        anim1bit.max_packed_size = asset::emotion::NEUTRAL.max_packed_size;
+        // Frame 0 is diff from black → no base_frame
+        anim1bit.base_frame = nullptr;
+        anim1bit.frames = asset::emotion::NEUTRAL.frames();
+        display->registerEmotion("neutral", anim1bit);
+    }
+
     // Register idle emotion
     {
         Animation1Bit anim1bit;
@@ -356,7 +372,7 @@ bool DeviceProfile::setup(AppController &app)
         return false;
     }
 
-    //audio_mgr->start();
+    // audio_mgr->start();
 
     // =========================================================
     // 3️⃣ NETWORK
@@ -369,9 +385,9 @@ bool DeviceProfile::setup(AppController &app)
     net_cfg.ap_max_clients = 4;       // Số thiết bị tối đa kết nối vào portal
 
     // Đặt địa chỉ IP và port của WebSocket server (ví dụ: 192.168.1.100:8080)
-    // Thêm path nếu server yêu cầu, ví dụ: ws://192.168.1.100:8080/ws
+    // Thêm path nếu server yêu cầu, ví dụ: ws://13.239.36.114:8000/ws
     // Uvicorn/FastAPI thường khai báo endpoint WebSocket tại "/ws".
-    net_cfg.ws_url = "ws://10.170.75.149:8080/ws";
+    net_cfg.ws_url = "ws://13.239.36.114:8000/ws";
 
     if (!network_mgr->init(net_cfg))
     {
@@ -389,12 +405,16 @@ bool DeviceProfile::setup(AppController &app)
     // Push incoming binary (ADPCM) from WS into speaker ringbuffer
     // and drive InteractionState to SPEAKING while audio is arriving.
     StreamBufferHandle_t spk_sb = audio_mgr->getSpeakerEncodedBuffer();
-    AudioManager *audio_ptr = audio_mgr.get();       // Capture pointer for disconnect handler
-    NetworkManager *network_ptr = network_mgr.get(); // For session flag access
+    network_mgr->setMicBuffer(audio_mgr->getMicEncodedBuffer()); // Uplink mic buffer
+    AudioManager *audio_ptr = audio_mgr.get();                   // Capture pointer for disconnect handler
+    NetworkManager *network_ptr = network_mgr.get();             // For session flag access
 
     network_mgr->onServerBinary([spk_sb, network_ptr](const uint8_t *data, size_t len)
                                 {
         if (!data || len == 0) return;
+        if (StateManager::instance().getInteractionState() == state::InteractionState::LISTENING) {
+            return; 
+        }
         // Feed encoded data to AudioManager's downlink buffer
         size_t written = xStreamBufferSend(spk_sb, data, len, pdMS_TO_TICKS(100));
         if (written != len) {
@@ -455,15 +475,28 @@ bool DeviceProfile::setup(AppController &app)
     // During audio streaming, prevent WS from closing on WiFi fluctuations
     // (use network_ptr already declared above)
     auto &sm = StateManager::instance();
+
+    static state::InteractionState prev_interaction_state = state::InteractionState::IDLE;
+
     sm.subscribeInteraction([network_ptr](state::InteractionState new_state, state::InputSource src)
                             {
-        if (new_state == state::InteractionState::SPEAKING) {
-            // Enable immune mode - WS must survive WiFi roaming/power save transitions
-            network_ptr->setWSImmuneMode(true);
-        } else {
-            // Disable immune mode when not speaking
-            network_ptr->setWSImmuneMode(false);
-        } });
+    // 🟢 Vừa nhấn nút (Vào LISTENING)
+    if (new_state == state::InteractionState::LISTENING && prev_interaction_state != state::InteractionState::LISTENING) {
+        network_ptr->sendText("START");
+    }
+    // 🔴 Vừa thả nút (Thoát LISTENING)
+    else if (new_state != state::InteractionState::LISTENING && prev_interaction_state == state::InteractionState::LISTENING) {
+        network_ptr->sendText("END");
+    }
+
+    // Immune Mode duy trì kết nối (Giữ nguyên)
+    if (new_state == state::InteractionState::SPEAKING) {
+        network_ptr->setWSImmuneMode(true);
+    } else {
+        network_ptr->setWSImmuneMode(false);
+    }
+
+    prev_interaction_state = new_state; });
 
     // =========================================================
     // 4️⃣ TOUCH INPUT
@@ -471,7 +504,7 @@ bool DeviceProfile::setup(AppController &app)
     auto touch_input = std::make_unique<TouchInput>();
 
     TouchInput::Config touch_cfg{
-        .pin = GPIO_NUM_16, 
+        .pin = GPIO_NUM_16,
         .active_low = true,
         .long_press_ms = 1200};
 
@@ -488,7 +521,7 @@ bool DeviceProfile::setup(AppController &app)
         }
         if (e == TouchInput::Event::RELEASE) {
             // Currently no action on release
-            app.postEvent(event::AppEvent::CANCEL_REQUEST);
+            app.postEvent(event::AppEvent::RELEASE_BUTTON);
         }
         if (e == TouchInput::Event::LONG_PRESS) {
             app.postEvent(event::AppEvent::SLEEP_REQUEST);
