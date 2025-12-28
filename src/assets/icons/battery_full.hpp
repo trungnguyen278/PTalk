@@ -5,6 +5,7 @@ namespace asset::icon {
 
 #ifndef ICON
 #define ICON
+
 struct Icon {
     int w;
     int h;
