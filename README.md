@@ -6,8 +6,9 @@ A modular, event-driven firmware for ESP32-based voice assistant devices with Wi
 
 - **Voice Input/Output**: I2S-based audio capture (INMP441 mic) and playback (MAX98357 speaker)
 - **Audio Codecs**: Support for ADPCM and Opus compression
-- **Display Management**: ST7789 display driver with animation support and framebuffer
+- **Display Management**: ST7789 display driver with animation support, direct rendering via AnimationPlayer (no framebuffer)
 - **Network Connectivity**: WiFi and WebSocket client integration
+- **Emotion System**: Server-driven emotion codes (WebSocket → `NetworkManager::parseEmotionCode()` → `StateManager` → Display)
 - **Power Management**: Battery monitoring with ADC, TP4056 charging detection
 - **State Management**: Central event hub with publish-subscribe pattern
 - **Multi-threaded**: FreeRTOS task-based architecture
@@ -115,12 +116,10 @@ The system uses a centralized state machine with the following state types:
 - `ONLINE` - Full connectivity established
 
 ### Power State
-- `NORMAL` - Battery healthy (20-100%)
-- `LOW_BATTERY` - Battery depleted (10-20%)
-- `CRITICAL` - Battery critically low (<10%)
+- `NORMAL` - Battery healthy
 - `CHARGING` - Device charging
 - `FULL_BATTERY` - Fully charged
-- `POWER_SAVING` - Reduced power mode
+- `CRITICAL` - Battery critically low (auto deep sleep behavior)
 - `ERROR` - Battery fault/disconnected
 
 ### System State
@@ -198,13 +197,18 @@ Configure in config.h:
 ### Display System
 - **Driver**: ST7789 SPI interface
 - **Resolution**: 240x240 pixels
-- **Features**: Framebuffer with double-buffering, animation playback
-- **Animations**: RLE-encoded image sequences (see `gif2rle.py`)
+- **Features**: Direct rendering (AnimationPlayer) — no framebuffer required, animation playback
+- **Animations**: RLE-encoded image sequences (see `scripts/convert_assets.py`) 
+- **Registered assets (DeviceProfile)**: `neutral`, `idle`, `listening`, `happy`, `sad`, `thinking`, `stun` (others may be added)
 
 ### Network System
 - **WiFi**: ESP32 native 802.11b/g/n (2.4GHz)
 - **WebSocket**: Persistent connection for bidirectional communication
 - **Web Portal**: Captive portal for WiFi provisioning
+
+### Emotion System
+- **Flow**: Server sends 2-char emotion codes via WebSocket → `NetworkManager::parseEmotionCode()` → `StateManager::setEmotionState()` → `DisplayManager` plays animation
+- See `docs/EMOTION_SYSTEM.md` for details and mapping
 
 ### Power System
 - **Battery Monitoring**: ADC-based voltage measurement
@@ -214,11 +218,11 @@ Configure in config.h:
 
 ## 🧵 Threading Model
 
-- **Core 0**: FreeRTOS scheduler, WiFi/BLE stack
-- **Core 1**: 
-  - `AppControllerTask` (priority 4) - Main event loop
-  - `UI_Task` (priority 3) - Display updates
-  - `PowerManager` timer - Battery monitoring
+- **Core 0**: FreeRTOS + WiFi driver, **Audio MIC & Codec tasks** (mic capture, codec decode/encode pinned to core 0)
+- **Core 1**: `AppControllerTask` (priority 4) - Main event loop; `DisplayLoop`/UI task (priority 3); `AudioSpkTask` (speaker playback pinned to core 1)
+- **NetworkLoop**: uses `tskNO_AFFINITY` (no fixed core)
+
+Note: Task priorities and core pinning are set in `AppController::start()` / `AudioManager::start()` / `DisplayManager::startLoop()`.
 
 ## 🔌 Event Flow
 
@@ -241,14 +245,15 @@ Managers update hardware state
 ## 📝 Implementation Notes
 
 ### TODOs
-Currently marked for future implementation:
-- Audio capture and streaming pipeline
-- Audio playback control
-- Full OTA firmware update support
-- Configuration management (NVS)
-- Advanced touch/button input handling
-- Sleep/wake logic refinement
-- Mute/unmute functionality
+Current status / TODOs:
+- ✅ Audio capture and codec pipeline implemented (mic, codec, speaker tasks) — integrate end-to-end streaming tests
+- ✅ Audio playback control implemented via `AudioOutput` APIs
+- ✅ Emotion parsing (`NetworkManager::parseEmotionCode()`) and `DisplayManager` emotion handling implemented
+- ⚠️ Full OTA firmware update: partial support (OTAUpdater implemented, integration tests recommended)
+- ⚠️ Configuration management (NVS) — read/write helpers and UI to modify settings
+- ⚠️ Advanced touch/button input features and polish
+- ⚠️ Sleep/wake logic refinement and edge-case testing
+- ⚠️ Mute/unmute functionality (privacy mode) - supported in state but UI/UX polish recommended
 
 ### Code Style
 - C++17 with Modern C++ idioms
