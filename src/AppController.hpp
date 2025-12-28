@@ -20,7 +20,7 @@ namespace event
         OTA_BEGIN,               // Trigger OTA flow
         OTA_FINISHED,            // OTA process finished (success or fail)
         BATTERY_PERCENT_CHANGED, // Battery percentage changed (not a state)
-        CANCEL_REQUEST,          // User requests to cancel current interaction
+        RELEASE_BUTTON,          // User requests to cancel current interaction
         SLEEP_REQUEST,           // Request to enter sleep mode
         WAKE_REQUEST             // Request to wake from sleep mode
     };
