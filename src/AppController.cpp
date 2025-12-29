@@ -501,6 +501,17 @@ void AppController::processQueue()
                 case event::AppEvent::SLEEP_REQUEST:
                     enterSleep();
                     break;
+                case event::AppEvent::CONFIG_DONE_RESTART:
+                    ESP_LOGI(TAG, "Configuration done - restarting system");
+                    if (display)
+                    {
+                        display->playText("Config done. Restarting...", -1, -1, 0xFFFF, 1.5); // centered, white text
+                        vTaskDelay(pdMS_TO_TICKS(2000));
+                    }
+
+                    esp_restart();
+                    break;
+                
                 case event::AppEvent::WAKE_REQUEST:
                     wake();
                     break;

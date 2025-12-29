@@ -22,6 +22,7 @@ namespace event
         BATTERY_PERCENT_CHANGED, // Battery percentage changed (not a state)
         RELEASE_BUTTON,          // User requests to cancel current interaction
         SLEEP_REQUEST,           // Request to enter sleep mode
+        CONFIG_DONE_RESTART,     // Configuration done, request restart
         WAKE_REQUEST             // Request to wake from sleep mode
     };
 }
