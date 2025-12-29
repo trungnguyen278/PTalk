@@ -1,6 +1,7 @@
 #include "NetworkManager.hpp"
 #include "WifiService.hpp"
 #include "WebSocketClient.hpp"
+
 #include "esp_mac.h"
 #include <sstream>
 #include <iomanip>
@@ -722,9 +723,9 @@ void NetworkManager::retryWifiThenBLE()
     // TODO: nếu cần esp_wifi_deinit() để giải phóng RF cho BLE thì xử lý ở đây
 
     // 2. Bật BLE
-    if (bluetooth)
-    {
-        bluetooth->start();
+   if (ble_service) {
+        ble_service->init(config_.ap_ssid); // Dùng tên PTalk làm tên Bluetooth
+        ble_service->start();
     }
 
     // 3. Publish state

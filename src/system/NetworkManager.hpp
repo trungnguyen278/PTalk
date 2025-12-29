@@ -11,6 +11,7 @@
 
 #include "system/StateTypes.hpp"
 #include "system/StateManager.hpp"
+#include "BluetoothService.hpp"
 
 class WifiService;     // Low-level WiFi
 class WebSocketClient; // Low-level WebSocket
@@ -96,6 +97,9 @@ public:
     /// Use during critical operations like audio streaming
     void setWSImmuneMode(bool immune);
 
+    /// Set BluetoothService instance for BLE config mode
+    void setBluetoothService(std::shared_ptr<BluetoothService> ble) { ble_service = ble; }
+
     /// Check if currently in active speaking session
     bool isSpeakingSessionActive() const { return speaking_session_active; }
 
@@ -165,7 +169,7 @@ private:
 
 private:
     TaskHandle_t task_handle = nullptr;
-    
+
     uint32_t update_interval_ms = 33; // ~30 FPS tick
     int sub_interaction_id = -1;
 
@@ -175,6 +179,8 @@ private:
     // ======================================================
     std::unique_ptr<WifiService> wifi;
     std::unique_ptr<WebSocketClient> ws;
+        // Bluetooth service for BLE config mode
+    std::shared_ptr<BluetoothService> ble_service;
 
     // ======================================================
     // Config storage
@@ -188,6 +194,7 @@ private:
 
     // WiFi status flags
     bool wifi_ready = false; // đã có IP hay chưa
+
 
     // WS runtime control
     bool ws_should_run = false;           // Manager muốn WS chạy

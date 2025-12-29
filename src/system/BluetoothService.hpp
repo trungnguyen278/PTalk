@@ -5,45 +5,53 @@
 #include <vector>
 #include <cstdint>
 
-/**
- * BluetoothService (skeleton)
- * -----------------------------------------------------------
- * Placeholder service for future mobile-app provisioning over BLE.
- * - Not wired into main app yet.
- * - No actual BLE stack calls; only interface and state placeholders.
- */
-class BluetoothService {
+// NimBLE headers
+#include "host/ble_hs.h"
+#undef min
+#undef max
+
+#include "Version.hpp"
+
+class BluetoothService
+{
 public:
-    using ConfigHandler = std::function<void(const std::string& key, const std::string& value)>;
-    using RawHandler    = std::function<void(const uint8_t* data, size_t len)>;
+    struct ConfigData {
+        std::string device_name = "PTalk";
+        uint8_t volume = 30;
+        uint8_t brightness = 100;
+        std::string ssid;
+        std::string pass;
+    };
+
+    using OnConfigComplete = std::function<void(const ConfigData&)>;
 
     BluetoothService();
     ~BluetoothService();
 
-    // Initialize internal state (no BLE resources yet)
-    bool init();
-
-    // Start/stop placeholder session
-    bool start();
+    bool init(const std::string& adv_name);
+    void start();
     void stop();
+    void onConfigComplete(OnConfigComplete cb) { config_cb = cb; }
 
-    bool isRunning() const { return running_; }
+    // Callback xử lý GATT (Phải để public để struct bên ngoài truy cập được)
+    static int gatt_svr_access(uint16_t conn_handle, uint16_t attr_handle, struct ble_gatt_access_ctxt *ctxt, void *arg);
 
-    // Metadata
-    void setDeviceName(const std::string& name);
-    const std::string& deviceName() const { return device_name_; }
-
-    // Handlers for future config messages (e.g., key/value pairs from app)
-    void onConfig(ConfigHandler cb) { cfg_handler_ = std::move(cb); }
-    void onRaw(RawHandler cb) { raw_handler_ = std::move(cb); }
-
-    // Placeholder send APIs (no-op until BLE transport is implemented)
-    bool sendText(const std::string& text);
-    bool sendBinary(const std::vector<uint8_t>& data);
+    // UUIDs
+    static constexpr uint16_t SVC_UUID_CONFIG      = 0xFF01;
+    static constexpr uint16_t CHR_UUID_DEVICE_NAME = 0xFF02;
+    static constexpr uint16_t CHR_UUID_VOLUME      = 0xFF03;
+    static constexpr uint16_t CHR_UUID_BRIGHTNESS  = 0xFF04;
+    static constexpr uint16_t CHR_UUID_WIFI_SSID   = 0xFF05;
+    static constexpr uint16_t CHR_UUID_WIFI_PASS   = 0xFF06;
+    static constexpr uint16_t CHR_UUID_APP_VERSION = 0xFF07;
+    static constexpr uint16_t CHR_UUID_BUILD_INFO  = 0xFF08;
+    static constexpr uint16_t CHR_UUID_SAVE_CMD    = 0xFF09;
 
 private:
-    std::string device_name_ = "PTalk-BLE";
-    ConfigHandler cfg_handler_{};
-    RawHandler raw_handler_{};
-    bool running_ = false;
+    static void on_stack_sync();
+
+    static ConfigData temp_cfg;
+    static OnConfigComplete config_cb;
+    static std::string s_adv_name;
+    bool started = false;
 };
