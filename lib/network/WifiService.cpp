@@ -417,8 +417,10 @@ void WifiService::stopCaptivePortal()
 }
 
 void WifiService::disconnect()
-{
+{   
+    esp_wifi_disconnect();
     esp_wifi_stop();
+    esp_wifi_deinit();
     wifi_started = false;
     connected = false;
     if (status_cb)
