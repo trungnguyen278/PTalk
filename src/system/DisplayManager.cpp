@@ -372,7 +372,7 @@ void DisplayManager::handleConnectivity(state::ConnectivityState s)
         break;
 
     case state::ConnectivityState::ONLINE:
-        // playIcon("wifi_ok");
+        playEmotion("idle");
         break;
     }
 }
