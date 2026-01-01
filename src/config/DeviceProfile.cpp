@@ -409,7 +409,7 @@ bool DeviceProfile::setup(AppController &app)
     // Đặt địa chỉ IP và port của WebSocket server (ví dụ: 192.168.1.100:8080)
     // Thêm path nếu server yêu cầu, ví dụ: ws://13.239.36.114:8000/ws
     // Uvicorn/FastAPI thường khai báo endpoint WebSocket tại "/ws".
-    net_cfg.ws_url = "ws://10.107.173.231:8000/ws";
+    net_cfg.ws_url = "ws://10.13.136.231:8000/ws";
 
     if (!network_mgr->init(net_cfg))
     {
