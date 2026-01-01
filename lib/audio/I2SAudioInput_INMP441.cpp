@@ -2,9 +2,9 @@
 #include "esp_log.h"
 #include <cstring>
 
-static const char* TAG = "INMP441";
+static const char *TAG = "INMP441";
 
-I2SAudioInput_INMP441::I2SAudioInput_INMP441(const Config& cfg)
+I2SAudioInput_INMP441::I2SAudioInput_INMP441(const Config &cfg)
     : cfg_(cfg) {}
 
 I2SAudioInput_INMP441::~I2SAudioInput_INMP441()
@@ -19,50 +19,44 @@ I2SAudioInput_INMP441::~I2SAudioInput_INMP441()
 
 bool I2SAudioInput_INMP441::startCapture()
 {
-    if (running) return true;
+    if (running)
+        return true;
+
+    i2s_driver_uninstall(cfg_.i2s_port); // Dọn dẹp sạch port
 
     i2s_config_t i2s_cfg = {};
     i2s_cfg.mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX);
     i2s_cfg.sample_rate = cfg_.sample_rate;
     i2s_cfg.bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT;
-    i2s_cfg.channel_format = cfg_.use_left_channel
-        ? I2S_CHANNEL_FMT_ONLY_LEFT
-        : I2S_CHANNEL_FMT_ONLY_RIGHT;
-    i2s_cfg.communication_format = I2S_COMM_FORMAT_STAND_I2S;
-    i2s_cfg.dma_buf_count = 3;
-    i2s_cfg.dma_buf_len = 256;  // Small buffer to leave room for speaker DMA
+
+    // BẮT BUỘC: Đọc cả 2 kênh để tạo 64 xung clock cho ICS43434
+    i2s_cfg.channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT;
+
+    i2s_cfg.communication_format = (i2s_comm_format_t)(I2S_COMM_FORMAT_STAND_I2S);
+    i2s_cfg.dma_buf_count = 4;
+    i2s_cfg.dma_buf_len = 512;
     i2s_cfg.use_apll = false;
     i2s_cfg.intr_alloc_flags = ESP_INTR_FLAG_LEVEL1;
 
-    i2s_pin_config_t pin_cfg = {};
-    pin_cfg.bck_io_num = cfg_.pin_bck;
-    pin_cfg.ws_io_num  = cfg_.pin_ws;
-    pin_cfg.data_in_num = cfg_.pin_din;
-    pin_cfg.data_out_num = I2S_PIN_NO_CHANGE;
-
     esp_err_t err = i2s_driver_install(cfg_.i2s_port, &i2s_cfg, 0, nullptr);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "I2S driver install failed: %s", esp_err_to_name(err));
+    if (err != ESP_OK)
         return false;
-    }
-    
-    err = i2s_set_pin(cfg_.i2s_port, &pin_cfg);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "I2S set pin failed: %s", esp_err_to_name(err));
-        i2s_driver_uninstall(cfg_.i2s_port);
-        return false;
-    }
-    
-    i2s_zero_dma_buffer(cfg_.i2s_port);
+
+    i2s_pin_config_t pin_cfg = {
+        .mck_io_num = I2S_PIN_NO_CHANGE,
+        .bck_io_num = cfg_.pin_bck,
+        .ws_io_num = cfg_.pin_ws,
+        .data_out_num = I2S_PIN_NO_CHANGE,
+        .data_in_num = cfg_.pin_din};
+    i2s_set_pin(cfg_.i2s_port, &pin_cfg);
 
     running = true;
-    ESP_LOGI(TAG, "INMP441 capture started");
     return true;
 }
-
 void I2SAudioInput_INMP441::stopCapture()
 {
-    if (!running) return;
+    if (!running)
+        return;
 
     i2s_stop(cfg_.i2s_port);
     running = false;
@@ -71,7 +65,8 @@ void I2SAudioInput_INMP441::stopCapture()
 
 void I2SAudioInput_INMP441::pauseCapture()
 {
-    if (!running) return;
+    if (!running)
+        return;
     i2s_stop(cfg_.i2s_port);
     ESP_LOGI(TAG, "INMP441 capture paused");
 }
@@ -82,39 +77,28 @@ void I2SAudioInput_INMP441::pauseCapture()
 
 size_t I2SAudioInput_INMP441::readPcm(int16_t* pcm, size_t max_samples)
 {
-    if (!pcm || max_samples == 0) return 0;
+    if (!pcm || max_samples == 0 || !running) return 0;
 
-    if (!running || muted) {
-        memset(pcm, 0, max_samples * sizeof(int16_t));
-        return max_samples;
-    }
-
-    // INMP441 xuất 24-bit left-justified trong 32-bit
-    static int32_t i2s_raw[128];
-
+    // Khai báo buffer tạm trên Stack (256 samples * 2 kênh * 4 bytes = 2KB)
+    // ESP32 Task stack 4KB hoặc 8KB dư sức chứa 2KB này.
+    int32_t raw_buf[max_samples * 2]; 
     size_t bytes_read = 0;
-    ESP_ERROR_CHECK(
-        i2s_read(
-            cfg_.i2s_port,
-            i2s_raw,
-            sizeof(i2s_raw),
-            &bytes_read,
-            portMAX_DELAY
-        )
-    );
 
-    size_t in_samples = bytes_read / sizeof(int32_t);
-    if (in_samples > max_samples)
-        in_samples = max_samples;
+    esp_err_t res = i2s_read(cfg_.i2s_port, raw_buf, sizeof(raw_buf), &bytes_read, pdMS_TO_TICKS(20));
+    if (res != ESP_OK || bytes_read == 0) return 0;
 
-    for (size_t i = 0; i < in_samples; i++) {
-        // 24-bit → 16-bit
-        pcm[i] = static_cast<int16_t>(i2s_raw[i] >> 14);
+    size_t actual_samples = bytes_read / sizeof(int32_t);
+    size_t pcm_idx = 0;
+
+    // Lọc lấy kênh Trái (Index 0, 2, 4...) và dịch bit 14
+    for (size_t i = 0; i < actual_samples; i += 2) {
+        if (pcm_idx < max_samples) {
+            pcm[pcm_idx++] = (int16_t)(raw_buf[i] >> 16);
+        }
     }
 
-    return in_samples; // ✅ TRẢ VỀ SAMPLE
+    return pcm_idx; 
 }
-
 
 // ============================================================================
 // Control
@@ -127,9 +111,12 @@ void I2SAudioInput_INMP441::setMuted(bool mute)
 
 void I2SAudioInput_INMP441::setLowPower(bool enable)
 {
-    if (enable && running) {
+    if (enable && running)
+    {
         i2s_stop(cfg_.i2s_port);
-    } else if (!enable && running) {
+    }
+    else if (!enable && running)
+    {
         i2s_start(cfg_.i2s_port);
     }
 }
