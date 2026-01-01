@@ -5,7 +5,9 @@ from datetime import datetime
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 import uvicorn
 
-# ================== IMA ADPCM TABLES ==================
+# =====================================================
+# IMA ADPCM TABLES (CHUẨN)
+# =====================================================
 
 STEP_TABLE = [
      7, 8, 9, 10, 11, 12, 13, 14, 16, 17,
@@ -19,24 +21,19 @@ STEP_TABLE = [
     15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767
 ]
 
-INDEX_TABLE = [
-    -1, -1, -1, -1, 2, 4, 6, 8,
-    -1, -1, -1, -1, 2, 4, 6, 8
-]
+INDEX_TABLE = [-1, -1, -1, -1, 2, 4, 6, 8,
+               -1, -1, -1, -1, 2, 4, 6, 8]
 
-# ================== ADPCM DECODER ==================
+# =====================================================
+# ADPCM ENCODE / DECODE (HIGH nibble trước)
+# =====================================================
 
-def adpcm_decode(adpcm_bytes, state):
-    if state is None:
-        predictor = 0
-        index = 0
-    else:
-        predictor, index = state
-
+def adpcm_decode(adpcm, state):
+    predictor, index = state or (0, 0)
     pcm = bytearray()
 
-    for b in adpcm_bytes:
-        for nibble in (b & 0x0F, b >> 4):
+    for b in adpcm:
+        for nibble in ((b >> 4) & 0x0F, b & 0x0F):
             step = STEP_TABLE[index]
             diff = step >> 3
 
@@ -48,35 +45,26 @@ def adpcm_decode(adpcm_bytes, state):
             predictor += diff
             predictor = max(-32768, min(32767, predictor))
 
-            index += INDEX_TABLE[nibble & 0x0F]
+            index += INDEX_TABLE[nibble]
             index = max(0, min(88, index))
 
-            pcm += int(predictor).to_bytes(2, "little", signed=True)
+            pcm += predictor.to_bytes(2, "little", signed=True)
 
-    return bytes(pcm), (predictor, index)
+    return pcm, (predictor, index)
 
 
-# ================== ADPCM ENCODER ==================
+def adpcm_encode(pcm, state):
+    predictor, index = state or (0, 0)
+    out = bytearray()
+    high = True
+    byte = 0
 
-def adpcm_encode(pcm_bytes, state):
-    if state is None:
-        predictor = 0
-        index = 0
-    else:
-        predictor, index = state
+    samples = [int.from_bytes(pcm[i:i+2], "little", signed=True)
+               for i in range(0, len(pcm), 2)]
 
-    adpcm = bytearray()
-    pcm_samples = [
-        int.from_bytes(pcm_bytes[i:i+2], "little", signed=True)
-        for i in range(0, len(pcm_bytes), 2)
-    ]
-
-    nibble_buffer = 0
-    high = False
-
-    for sample in pcm_samples:
+    for s in samples:
         step = STEP_TABLE[index]
-        diff = sample - predictor
+        diff = s - predictor
         code = 0
 
         if diff < 0:
@@ -104,42 +92,45 @@ def adpcm_encode(pcm_bytes, state):
         index += INDEX_TABLE[code]
         index = max(0, min(88, index))
 
-        if not high:
-            nibble_buffer = code & 0x0F
-            high = True
-        else:
-            adpcm.append((code << 4) | nibble_buffer)
+        if high:
+            byte = (code & 0x0F) << 4
             high = False
+        else:
+            out.append(byte | (code & 0x0F))
+            high = True
 
-    if high:
-        adpcm.append(nibble_buffer)
+    if not high:
+        out.append(byte)
 
-    return bytes(adpcm), (predictor, index)
+    return out, (predictor, index)
 
+# =====================================================
+# SERVER
+# =====================================================
 
 HOST = "0.0.0.0"
 PORT = 8000
-
-FRAME_ADPCM = 512
 SAMPLE_RATE = 16000
-SEND_INTERVAL = 0.06
+FRAME_ADPCM = 512
+SEND_INTERVAL = 0.016
 
 RECORD_DIR = "recordings"
+REPLY_WAV = "chặnkhjkhg-phải-tình-đầu-sao-đau-đến-thế.wav"   # <-- BẠN ĐỔI FILE NÀY
+
 os.makedirs(RECORD_DIR, exist_ok=True)
 
 app = FastAPI()
 
 def log(tag, msg):
-    ts = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-    print(f"[{ts}] {tag} {msg}")
+    print(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] {tag} {msg}")
 
 @app.websocket("/ws")
-async def ws_handler(ws: WebSocket):
+async def ws(ws: WebSocket):
     await ws.accept()
-    log("📡", "ESP32 connected")
+    log("📡", "ESP connected")
 
     rx_state = None
-    pcm_chunks = []
+    pcm_buf = []
     recording = False
 
     try:
@@ -152,45 +143,37 @@ async def ws_handler(ws: WebSocket):
 
                 if recording:
                     pcm, rx_state = adpcm_decode(adpcm, rx_state)
-                    pcm_chunks.append(pcm)
-                    log("🔓", f"Decoded {len(pcm)} PCM bytes")
+                    pcm_buf.append(pcm)
 
             elif "text" in data:
                 msg = data["text"]
                 log("📩 RX", msg)
 
                 if msg == "START":
-                    pcm_chunks.clear()
+                    pcm_buf.clear()
                     rx_state = None
                     recording = True
-                    log("🎙️", "START")
+                    log("🎙️", "Record START")
 
                 elif msg == "END":
                     recording = False
-                    wav = save_wav(pcm_chunks)
-                    log("💾", f"WAV saved {wav}")
-                    asyncio.create_task(send_wav(ws, wav))
+                    path = save_wav(pcm_buf)
+                    log("💾", f"Saved {path}")
+                    asyncio.create_task(send_wav(ws, REPLY_WAV))
 
     except WebSocketDisconnect:
         log("🔌", "Disconnected")
 
-
-def save_wav(pcm_chunks):
-    path = os.path.join(
-        RECORD_DIR,
-        f"rec_{datetime.now().strftime('%H%M%S')}.wav"
-    )
-
+def save_wav(chunks):
+    path = os.path.join(RECORD_DIR, f"rec_{datetime.now().strftime('%H%M%S')}.wav")
     with wave.open(path, "wb") as wf:
         wf.setnchannels(1)
         wf.setsampwidth(2)
         wf.setframerate(SAMPLE_RATE)
-        wf.writeframes(b"".join(pcm_chunks))
-
+        wf.writeframes(b"".join(chunks))
     return path
 
-
-async def send_wav(ws: WebSocket, path):
+async def send_wav(ws, path):
     await ws.send_text("PROCESSING_START")
     await ws.send_text("01")
     await ws.send_text("SPEAK_START")
@@ -199,22 +182,18 @@ async def send_wav(ws: WebSocket, path):
 
     with wave.open(path, "rb") as wf:
         while True:
-            pcm = wf.readframes(256)  # 512 bytes PCM
+            pcm = wf.readframes(256)
             if not pcm:
                 break
 
             adpcm, tx_state = adpcm_encode(pcm, tx_state)
-
-            if len(adpcm) < FRAME_ADPCM:
-                adpcm += bytes(FRAME_ADPCM - len(adpcm))
+            adpcm = adpcm.ljust(FRAME_ADPCM, b'\x00')
 
             await ws.send_bytes(adpcm)
-            log("⬇️ TX", f"{len(adpcm)} bytes")
             await asyncio.sleep(SEND_INTERVAL)
 
     await ws.send_text("TTS_END")
     log("🏁", "Playback done")
-
 
 if __name__ == "__main__":
     log("🚀", f"Server ws://{HOST}:{PORT}/ws")
