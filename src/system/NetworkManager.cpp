@@ -496,12 +496,15 @@ void NetworkManager::handleWsBinaryMessage(const uint8_t *data, size_t len)
 // Task loop gửi dữ liệu lên Server
 void NetworkManager::uplinkTaskLoop()
 {
-    uint8_t send_buf[512];
+    const size_t SEND_SIZE = 512; 
+    uint8_t send_buf[SEND_SIZE];
+    size_t acc = 0; // accumulated bytes in send_buf
 
-    // Kiểm tra an toàn trước khi vào loop
-    if (!mic_encoded_sb)
-    {
-        ESP_LOGE(TAG, "Uplink Task: Buffer is NULL! Exit.");
+    ESP_LOGI(TAG, "Uplink task started (Strict 512-byte mode)");
+
+    // Sanity: ensure mic buffer assigned
+    if (!mic_encoded_sb) {
+        ESP_LOGE(TAG, "Uplink aborted: mic_encoded_sb not set");
         uplink_task_handle = nullptr;
         vTaskDelete(nullptr);
         return;
@@ -509,26 +512,71 @@ void NetworkManager::uplinkTaskLoop()
 
     while (started)
     {
+        // 1. Kiểm tra trạng thái hiện tại
         bool is_listening = (StateManager::instance().getInteractionState() == state::InteractionState::LISTENING);
-        if (!is_listening || !ws_running)
+        
+        // Nếu WebSocket mất kết nối, thoát luôn
+        if (!ws_running) {
+            ESP_LOGE(TAG, "Uplink aborted: WS disconnected");
             break;
-
-        // Lệnh này đã block (ngủ) task rồi
-        size_t read_bytes = xStreamBufferReceive(mic_encoded_sb, send_buf, sizeof(send_buf), pdMS_TO_TICKS(50));
-
-        if (read_bytes > 0 && ws)
-        {
-            ws->sendBinary(send_buf, read_bytes);
         }
-        else if (read_bytes == 0)
+
+        // 2. Logic thoát task: Nếu đã thả nút VÀ buffer đã cạn sạch dữ liệu
+        if (!is_listening && xStreamBufferIsEmpty(mic_encoded_sb) && acc == 0) {
+            ESP_LOGI(TAG, "Uplink finished: All audio data sent to server");
+            break;
+        }
+
+        // 3. Đọc dữ liệu từ buffer (tập hợp cho đủ 512 bytes)
+        // Nếu đang listening: Đợi tối đa 50ms để gom đủ 512 bytes
+        // Nếu đã thả nút (vét buffer): Không chờ (timeout = 0) để xử lý nhanh đoạn cuối
+        TickType_t wait_time = is_listening ? pdMS_TO_TICKS(50) : 0;
+
+        if (acc < SEND_SIZE) {
+            size_t want = SEND_SIZE - acc;
+            size_t got = xStreamBufferReceive(mic_encoded_sb, send_buf + acc, want, wait_time);
+            if (got > 0) {
+                acc += got;
+                ESP_LOGD(TAG, "Uplink read %zu bytes (acc=%zu)", got, acc);
+            }
+        }
+
+        // Nếu đủ 512 bytes thì gửi
+        if (acc == SEND_SIZE)
         {
-            // Nếu sau 50ms không có dữ liệu, nghỉ thêm 1 chút để nhường CPU
+            ws->sendBinary(send_buf, SEND_SIZE);
+            ESP_LOGD(TAG, "Uplink sent full frame (%zu bytes)", SEND_SIZE);
+            acc = 0; // reset accumulator
+            continue;
+        }
+
+        // Nếu đã stop listening và còn bytes dội lại thì gửi khung cuối (padding)
+        if (!is_listening && acc > 0)
+        {
+            memset(send_buf + acc, 0, SEND_SIZE - acc);
+            ws->sendBinary(send_buf, SEND_SIZE);
+            ESP_LOGI(TAG, "Sent final padded frame (%zu bytes real data)", acc);
+            break; // Gửi nốt là xong, thoát task
+        }
+
+        // Nếu đang listening nhưng chưa có dữ liệu, nghỉ chút để nhường CPU
+        if (is_listening && acc == 0)
+        {
             vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        else if (is_listening)
+        {
+            // Partial data present, short backoff while waiting for remainder
+            vTaskDelay(pdMS_TO_TICKS(5));
         }
     }
 
-    xStreamBufferReset(mic_encoded_sb);
+    // 4. Dọn dẹp an toàn
+    if (mic_encoded_sb) {
+        xStreamBufferReset(mic_encoded_sb);
+    }
     uplink_task_handle = nullptr;
+    ESP_LOGW(TAG, "Uplink task deleted");
     vTaskDelete(nullptr);
 }
 
@@ -723,22 +771,24 @@ void NetworkManager::retryWifiThenBLE()
     // TODO: nếu cần esp_wifi_deinit() để giải phóng RF cho BLE thì xử lý ở đây
 
     // 2. Bật BLE
-//    if (ble_service) {
-//         ble_service->init(config_.ap_ssid); // Dùng tên PTalk làm tên Bluetooth
-//         ble_service->start();
-//     }
+    //    if (ble_service) {
+    //         ble_service->init(config_.ap_ssid); // Dùng tên PTalk làm tên Bluetooth
+    //         ble_service->start();
+    //     }
 
     // 3. Publish state
     publishState(state::ConnectivityState::CONFIG_BLE);
 
     wifi_retry_task = nullptr;
-    vTaskDelete(NULL); 
+    vTaskDelete(NULL);
 }
 
-void NetworkManager::startBLEConfigMode() {
-    if (ble_service) {
+void NetworkManager::startBLEConfigMode()
+{
+    if (ble_service)
+    {
         ESP_LOGW(TAG, "Start BLE Config Mode now (RAM should be free)");
-        ble_service->init(config_.ap_ssid); 
+        ble_service->init(config_.ap_ssid);
         ble_service->start();
     }
 }
