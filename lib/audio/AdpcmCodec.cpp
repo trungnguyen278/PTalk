@@ -93,12 +93,12 @@ size_t AdpcmCodec::encode(const int16_t *pcm,
 
         if (!high_nibble)
         {
-            out_byte = nibble & 0x0F;
+            out_byte = (nibble & 0x0F) << 4; // HIGH nibble
             high_nibble = true;
         }
         else
         {
-            out[out_index++] = out_byte | ((nibble & 0x0F) << 4);
+            out[out_index++] = out_byte | (nibble & 0x0F); // LOW nibble
             high_nibble = false;
         }
     }
@@ -131,7 +131,7 @@ size_t AdpcmCodec::decode(const uint8_t *data,
     {
         uint8_t byte = data[i];
 
-        for (int shift = 0; shift <= 4; shift += 4)
+        for (int shift = 4; shift >= 0; shift -= 4)
         {
             int nibble = (byte >> shift) & 0x0F;
             int sign = nibble & 8;
