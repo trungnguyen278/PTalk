@@ -69,7 +69,7 @@ bool AudioManager::init()
         32 * 1024,
         1);
     sb_spk_pcm = xStreamBufferCreate(
-        4 * 1024,
+        8 * 1024,
         1);
     sb_spk_encoded = xStreamBufferCreate(
         16 * 1024, // Increased for better jitter tolerance
@@ -189,7 +189,7 @@ bool AudioManager::allocateResources()
 
     sb_mic_pcm = xStreamBufferCreate(4 * 1024, 1);
     sb_mic_encoded = xStreamBufferCreate(32 * 1024, 1);
-    sb_spk_pcm = xStreamBufferCreate(4 * 1024, 1);
+    sb_spk_pcm = xStreamBufferCreate(8 * 1024, 1);
     sb_spk_encoded = xStreamBufferCreate(16 * 1024, 1);
 
     if (!sb_mic_pcm || !sb_mic_encoded || !sb_spk_pcm || !sb_spk_encoded)
@@ -439,34 +439,36 @@ void AudioManager::codecTaskLoop()
         // =====================
         // ENCODE (MIC → SERVER)
         // =====================
-        size_t pcm_bytes = xStreamBufferReceive(
-            sb_mic_pcm,
-            reinterpret_cast<uint8_t *>(pcm_in),
-            sizeof(pcm_in),
-            pdMS_TO_TICKS(10)
-
-        );
-
-        if (pcm_bytes == sizeof(pcm_in))
+        if (!speaking)
         {
-            size_t samples = pcm_bytes / sizeof(int16_t);
+            size_t pcm_bytes = xStreamBufferReceive(
+                sb_mic_pcm,
+                reinterpret_cast<uint8_t *>(pcm_in),
+                sizeof(pcm_in),
+                pdMS_TO_TICKS(10)
 
-            size_t enc_len = codec->encode(
-                pcm_in,
-                samples,
-                encoded,
-                sizeof(encoded));
-            // ESP_LOGD(TAG, "Encoded %zu PCM samples to %zu bytes", samples, enc_len);
-            if (enc_len > 0)
+            );
+
+            if (pcm_bytes == sizeof(pcm_in))
             {
-                xStreamBufferSend(
-                    sb_mic_encoded,
+                size_t samples = pcm_bytes / sizeof(int16_t);
+
+                size_t enc_len = codec->encode(
+                    pcm_in,
+                    samples,
                     encoded,
-                    enc_len,
-                    pdMS_TO_TICKS(10));
+                    sizeof(encoded));
+                // ESP_LOGD(TAG, "Encoded %zu PCM samples to %zu bytes", samples, enc_len);
+                if (enc_len > 0)
+                {
+                    xStreamBufferSend(
+                        sb_mic_encoded,
+                        encoded,
+                        enc_len,
+                        pdMS_TO_TICKS(10));
+                }
             }
         }
-
         // =====================
         // DECODE (SERVER → SPK)
         // =====================
