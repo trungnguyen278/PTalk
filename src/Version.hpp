@@ -33,3 +33,19 @@ inline std::string getDeviceEfuseID()
 
     return oss.str(); // ví dụ: "24a160ff3b9c"
 }
+
+/**
+ * @brief Get device MAC address as 6-byte array
+ * Uses same efuse source as getDeviceEfuseID() for consistency
+ * @param out_mac Output array of 6 bytes
+ */
+inline void getDeviceMacBytes(uint8_t out_mac[6])
+{
+    uint64_t mac = getEfuseMac();
+    out_mac[0] = (mac >> 40) & 0xFF;
+    out_mac[1] = (mac >> 32) & 0xFF;
+    out_mac[2] = (mac >> 24) & 0xFF;
+    out_mac[3] = (mac >> 16) & 0xFF;
+    out_mac[4] = (mac >> 8) & 0xFF;
+    out_mac[5] = mac & 0xFF;
+}
