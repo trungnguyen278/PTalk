@@ -48,6 +48,14 @@ bool BluetoothService::init(const std::string &adv_name, const std::vector<WifiI
     esp_ble_gatts_app_register(0);
 
     device_id_str_ = getDeviceEfuseID();
+    
+    // Get raw MAC address for MEO SDK - use same source as getDeviceEfuseID()
+    getDeviceMacBytes(mac_addr_);
+    
+    ESP_LOGI(TAG, "Device MAC (efuse): %02X:%02X:%02X:%02X:%02X:%02X (ID: %s)",
+             mac_addr_[0], mac_addr_[1], mac_addr_[2],
+             mac_addr_[3], mac_addr_[4], mac_addr_[5],
+             device_id_str_.c_str());
 
     // Prepare Wi‑Fi list sorted by RSSI and deduplicated by SSID
     {
@@ -143,7 +151,7 @@ void BluetoothService::gattsEventHandler(esp_gatts_cb_event_t event, esp_gatt_if
         service_id.id.inst_id = 0x00;
         service_id.id.uuid.len = ESP_UUID_LEN_16;
         service_id.id.uuid.uuid.uuid16 = SVC_UUID_CONFIG;
-        esp_ble_gatts_create_service(gatts_if, &service_id, 25);
+        esp_ble_gatts_create_service(gatts_if, &service_id, 40); // Increased for MEO chars
         break;
     }
 
@@ -176,13 +184,21 @@ void BluetoothService::gattsEventHandler(esp_gatts_cb_event_t event, esp_gatt_if
         add_c(CHR_UUID_WS_URL, ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE);
         // New: MQTT URL characteristic (read/write)
         add_c(CHR_UUID_MQTT_URL, ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE);
+        
+        // MEO SDK Characteristics
+        add_c(CHR_UUID_USER_ID, ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE);  // MEO user ID (RW)
+        add_c(CHR_UUID_TX_KEY, ESP_GATT_CHAR_PROP_BIT_WRITE);                                 // MEO tx_key (WO - password)
+        add_c(CHR_UUID_PRODUCT_ID, ESP_GATT_CHAR_PROP_BIT_READ);                              // Product ID (RO)
+        add_c(CHR_UUID_DEV_MODEL, ESP_GATT_CHAR_PROP_BIT_READ);                               // Device model (RO)
+        add_c(CHR_UUID_DEV_MANUF, ESP_GATT_CHAR_PROP_BIT_READ);                               // Manufacturer (RO)
+        add_c(CHR_UUID_MAC_ADDR, ESP_GATT_CHAR_PROP_BIT_READ);                                // MAC address raw (RO)
         break;
     }
 
     case ESP_GATTS_ADD_CHAR_EVT:
     {
         static int char_idx = 0;
-        if (char_idx < 12)
+        if (char_idx < 18)  // Increased for MEO characteristics
             s_instance->char_handles[char_idx++] = param->add_char.attr_handle;
         break;
     }
@@ -234,6 +250,13 @@ void BluetoothService::handleWrite(esp_ble_gatts_cb_param_t *param)
     uint8_t *v = param->write.value;
     uint16_t l = param->write.len;
     ESP_LOGI(TAG, "Handle write: handle=0x%04x, len=%d", h, l);
+    
+    // Index mapping:
+    // 0: device_name, 1: volume, 2: brightness, 3: ssid, 4: pass
+    // 5: app_version (RO), 6: build_info (RO), 7: save_cmd, 8: device_id (RO), 9: wifi_list (RO)
+    // 10: ws_url, 11: mqtt_url
+    // 12: user_id, 13: tx_key, 14: product_id (RO), 15: dev_model (RO), 16: dev_manuf (RO), 17: mac_addr (RO)
+    
     if (h == char_handles[0])
         temp_cfg_.device_name.assign((char *)v, l);
     else if (h == char_handles[1])
@@ -288,10 +311,47 @@ void BluetoothService::handleWrite(esp_ble_gatts_cb_param_t *param)
             ESP_LOGI(TAG, "MQTT URL set (%d bytes): %.*s", (int)l, (int)l, reinterpret_cast<char *>(v));
         }
     }
+    // MEO SDK: User ID (index 12)
+    else if (h == char_handles[12])
+    {
+        temp_cfg_.user_id.assign((char *)v, l);
+        ESP_LOGI(TAG, "MEO User ID set (%d bytes): %.*s", (int)l, (int)l, reinterpret_cast<char *>(v));
+    }
+    // MEO SDK: TX Key (index 13) - requires auth
+    else if (h == char_handles[13])
+    {
+        if (!url_unlocked_)
+        {
+            std::string token(reinterpret_cast<char *>(v), reinterpret_cast<char *>(v) + l);
+            if (token == WS_URL_AUTH_TOKEN)
+            {
+                url_unlocked_ = true;
+                ESP_LOGI(TAG, "TX Key auth unlocked by token");
+            }
+            else
+            {
+                ESP_LOGW(TAG, "TX Key write blocked: invalid token. Send auth token first.");
+            }
+        }
+        else
+        {
+            temp_cfg_.tx_key.assign((char *)v, l);
+            ESP_LOGI(TAG, "MEO TX Key set (%d bytes)", (int)l);  // Don't log actual key
+        }
+    }
     else if (h == char_handles[7])
     {
         if (l > 0 && v[0] == 0x01 && config_cb_)
+        {
+            ESP_LOGI(TAG, "SAVE_CMD received! Saving config: ssid='%s', mqtt_url='%s', user_id='%s'",
+                     temp_cfg_.ssid.c_str(), temp_cfg_.mqtt_url.c_str(), temp_cfg_.user_id.c_str());
             config_cb_(temp_cfg_);
+        }
+        else
+        {
+            ESP_LOGW(TAG, "SAVE_CMD received but ignored: len=%d, v[0]=%02x, config_cb_=%s",
+                     (int)l, l > 0 ? v[0] : 0, config_cb_ ? "set" : "null");
+        }
     }
 
     if (param->write.need_rsp)
@@ -434,6 +494,65 @@ void BluetoothService::handleRead(esp_ble_gatts_cb_param_t *param, esp_gatt_if_t
                 ESP_LOGI(TAG, "MQTT URL read: %s (%d bytes)", temp_cfg_.mqtt_url.c_str(), (int)rsp.attr_value.len);
             }
         }
+    }
+    // ============================================================
+    // MEO SDK Characteristics Reads
+    // ============================================================
+    // User ID (index 12)
+    else if (param->read.handle == char_handles[12])
+    {
+        if (temp_cfg_.user_id.empty())
+        {
+            static const char empty_msg[] = "default";
+            rsp.attr_value.len = sizeof(empty_msg) - 1;
+            memcpy(rsp.attr_value.value, empty_msg, rsp.attr_value.len);
+        }
+        else
+        {
+            rsp.attr_value.len = temp_cfg_.user_id.length();
+            memcpy(rsp.attr_value.value, temp_cfg_.user_id.c_str(), rsp.attr_value.len);
+        }
+        ESP_LOGI(TAG, "MEO User ID read: %d bytes", (int)rsp.attr_value.len);
+    }
+    // TX Key (index 13) - Write Only, return empty on read
+    else if (param->read.handle == char_handles[13])
+    {
+        static const char wo_msg[] = "WO";  // Write-only indicator
+        rsp.attr_value.len = sizeof(wo_msg) - 1;
+        memcpy(rsp.attr_value.value, wo_msg, rsp.attr_value.len);
+        ESP_LOGW(TAG, "TX Key read: write-only characteristic");
+    }
+    // Product ID (index 14) - Read Only
+    else if (param->read.handle == char_handles[14])
+    {
+        std::string product_id = temp_cfg_.product_id.empty() ? "ptalk-v1" : temp_cfg_.product_id;
+        rsp.attr_value.len = product_id.length();
+        memcpy(rsp.attr_value.value, product_id.c_str(), rsp.attr_value.len);
+        ESP_LOGI(TAG, "Product ID read: %s", product_id.c_str());
+    }
+    // Device Model (index 15) - Read Only
+    else if (param->read.handle == char_handles[15])
+    {
+        rsp.attr_value.len = strlen(DEVICE_MODEL);
+        memcpy(rsp.attr_value.value, DEVICE_MODEL, rsp.attr_value.len);
+        ESP_LOGI(TAG, "Device Model read: %s", DEVICE_MODEL);
+    }
+    // Device Manufacturer (index 16) - Read Only
+    else if (param->read.handle == char_handles[16])
+    {
+        rsp.attr_value.len = strlen(DEVICE_MANUFACTURER);
+        memcpy(rsp.attr_value.value, DEVICE_MANUFACTURER, rsp.attr_value.len);
+        ESP_LOGI(TAG, "Device Manufacturer read: %s", DEVICE_MANUFACTURER);
+    }
+    // MAC Address raw bytes (index 17) - Read Only
+    else if (param->read.handle == char_handles[17])
+    {
+        // Return raw 6-byte MAC address
+        rsp.attr_value.len = 6;
+        memcpy(rsp.attr_value.value, mac_addr_, 6);
+        ESP_LOGI(TAG, "MAC Address read: %02X:%02X:%02X:%02X:%02X:%02X",
+                 mac_addr_[0], mac_addr_[1], mac_addr_[2],
+                 mac_addr_[3], mac_addr_[4], mac_addr_[5]);
     }
 
     esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id, ESP_GATT_OK, &rsp);

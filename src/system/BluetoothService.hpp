@@ -27,6 +27,12 @@ public:
         std::string pass;
         std::string ws_url; // WebSocket URL (e.g., ws://host:port/ws)
         std::string mqtt_url; // MQTT broker URL (e.g., mqtt://host:port)
+        
+        // MEO SDK credentials
+        std::string user_id;   // MEO user ID (multi-tenant namespace)
+        std::string tx_key;    // MEO transmit key (MQTT password)
+        std::string product_id; // Cloud-compatible product ID
+        
         ConfigData() = default;
     };
 
@@ -57,10 +63,18 @@ public:
     static constexpr uint16_t CHR_UUID_APP_VERSION = 0xFF07;
     static constexpr uint16_t CHR_UUID_BUILD_INFO = 0xFF08;
     static constexpr uint16_t CHR_UUID_SAVE_CMD = 0xFF09;
-    static constexpr uint16_t CHR_UUID_DEVICE_ID = 0xFF0A;
+    static constexpr uint16_t CHR_UUID_DEVICE_ID = 0xFF0A;     // Device MAC ID (RO)
     static constexpr uint16_t CHR_UUID_WIFI_LIST = 0xFF0B;
     static constexpr uint16_t CHR_UUID_WS_URL = 0xFF0C;
     static constexpr uint16_t CHR_UUID_MQTT_URL = 0xFF0D;
+    
+    // MEO SDK Characteristics
+    static constexpr uint16_t CHR_UUID_USER_ID = 0xFF0E;       // MEO user ID (RW)
+    static constexpr uint16_t CHR_UUID_TX_KEY = 0xFF0F;        // MEO tx_key / MQTT password (WO)
+    static constexpr uint16_t CHR_UUID_PRODUCT_ID = 0xFF10;    // Cloud product ID (RO)
+    static constexpr uint16_t CHR_UUID_DEV_MODEL = 0xFF11;     // Device model (RO)
+    static constexpr uint16_t CHR_UUID_DEV_MANUF = 0xFF12;     // Device manufacturer (RO)
+    static constexpr uint16_t CHR_UUID_MAC_ADDR = 0xFF13;      // MAC address raw 6 bytes (RO)
 
 private:
     static BluetoothService *s_instance;
@@ -83,7 +97,7 @@ private:
     esp_gatt_if_t gatts_if_ = 0; // Stores GATT interface assigned at service creation
     uint16_t conn_id_ = 0xFFFF;
     uint16_t service_handle_ = 0;
-    uint16_t char_handles[12] = {0}; // Handles for the 12 characteristics (added WS_URL and MQTT_URL)
+    uint16_t char_handles[18] = {0}; // Handles for 18 characteristics (added MEO chars)
 
     ConfigData temp_cfg_;
     OnConfigComplete config_cb_ = nullptr;
@@ -91,6 +105,11 @@ private:
     // Auth gate for WS URL only
     bool url_unlocked_ = false;
     static constexpr const char *WS_URL_AUTH_TOKEN = "PTALK_OK"; // token required to unlock WS URL
+    
+    // MEO device info
+    static constexpr const char *DEVICE_MODEL = "PTalk-V1";
+    static constexpr const char *DEVICE_MANUFACTURER = "PTIT";
+    uint8_t mac_addr_[6] = {0}; // Raw MAC address bytes
 
     std::string wifi_list_json_;
     std::string device_id_str_;
