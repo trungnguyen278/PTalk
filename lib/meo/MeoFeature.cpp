@@ -69,22 +69,8 @@ FeatureResponse MeoFeatureManager::invokeFeature(const FeatureCall& call)
         };
     }
 
-    try
-    {
-        return it->second(call);
-    }
-    catch (const std::exception& e)
-    {
-        ESP_LOGE(TAG, "Feature %s threw exception: %s", call.feature_name.c_str(), e.what());
-        return FeatureResponse{
-            call.feature_name,
-            call.device_id,
-            false,
-            std::string("Exception: ") + e.what(),
-            call.invoke_id,
-            {}
-        };
-    }
+    // Note: ESP-IDF has exceptions disabled by default, so no try-catch
+    return it->second(call);
 }
 
 FeatureCall MeoFeatureManager::parseInvokePayload(const std::string& json_payload,
