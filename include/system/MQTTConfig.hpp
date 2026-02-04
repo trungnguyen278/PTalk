@@ -4,28 +4,42 @@
 #include <string>
 
 /**
- * WSConfig.hpp
+ * MQTTConfig.hpp
  * ---------------------------------------------------------
- * Real-time device configuration via WebSocket protocol
- * Server → Device: Config commands (JSON format)
- * Device → Server: Acknowledgment + status (JSON format)
+ * MEO SDK Compatible MQTT Configuration
+ * 
+ * This file defines the MQTT message formats and topic patterns
+ * compatible with the MEO SDK protocol.
+ * 
+ * Topic Patterns:
+ * - Cloud invoke: meo/{userId}/{deviceId}/feature
+ * - Legacy invoke: meo/{deviceId}/feature/{featureName}/invoke
+ * - Event publish: meo/{userId}/{deviceId}/event/{eventName}
+ * - Feature response: meo/{userId}/{deviceId}/event/feature_response
+ * 
+ * Legacy PTalk topics (backward compatibility):
+ * - devices/{MAC}/cmd - config commands
+ * - devices/{MAC}/status - device status
+ * - devices/{MAC}/ota_data - OTA firmware chunks
+ * - devices/{MAC}/ota_ack - OTA acknowledgments
  */
 
 namespace mqtt_config
 {
     // =========================================================================
-    // MESSAGE TYPES
+    // MESSAGE TYPES (Legacy PTalk commands, mapped to MEO features)
     // =========================================================================
     
     /**
      * Config command types sent from server to device
+     * These are legacy commands that map to MEO feature invokes
      */
     enum class ConfigCommand : uint8_t
     {
         INVALID = 0,
         // Device info handshake
         DEVICE_HANDSHAKE = 1,      // Device initiates handshake with server (sends device_id)
-        SET_WIFI = 2,              // NOT allowed over WS (respond not_supported); use BLE
+        SET_WIFI = 2,              // NOT allowed over MQTT (respond not_supported); use BLE
         SET_AUDIO_VOLUME = 3,      // Server → Device: Set speaker volume (0-100)
         SET_BRIGHTNESS = 4,        // Server → Device: Set display brightness (0-100)
         SET_DEVICE_NAME = 5,       // Server → Device: Set device name
@@ -35,7 +49,10 @@ namespace mqtt_config
         REQUEST_OTA = 9,           // Server → Device: Trigger OTA update (optional version)
         REQUEST_BLE_CONFIG = 10,   // Server → Device: Open BLE config mode with WiFi scan
         
-        // Add more as needed
+        // PTalk-specific commands
+        SET_EMOTION = 11,          // Server → Device: Set display emotion
+        PLAY_TTS = 12,             // Server → Device: Play TTS audio
+        STOP_AUDIO = 13,           // Server → Device: Stop audio playback
     };
 
     /**
@@ -204,6 +221,12 @@ namespace mqtt_config
             return ConfigCommand::REQUEST_OTA;
         if (cmd_str == "request_ble_config")
             return ConfigCommand::REQUEST_BLE_CONFIG;
+        if (cmd_str == "set_emotion")
+            return ConfigCommand::SET_EMOTION;
+        if (cmd_str == "play_tts")
+            return ConfigCommand::PLAY_TTS;
+        if (cmd_str == "stop_audio")
+            return ConfigCommand::STOP_AUDIO;
         
         return ConfigCommand::INVALID;
     }
@@ -235,6 +258,12 @@ namespace mqtt_config
             return "request_ota";
         case ConfigCommand::REQUEST_BLE_CONFIG:
             return "request_ble_config";
+        case ConfigCommand::SET_EMOTION:
+            return "set_emotion";
+        case ConfigCommand::PLAY_TTS:
+            return "play_tts";
+        case ConfigCommand::STOP_AUDIO:
+            return "stop_audio";
         default:
             return "invalid";
         }
