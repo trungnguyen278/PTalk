@@ -27,6 +27,9 @@ public:
     void init();
     void setUri(const std::string& uri);      // mqtt://host:port
     void setClientId(const std::string& id);  // unique device id
+    void setUsername(const std::string& user); // MQTT username (device_id)
+    void setPassword(const std::string& pass); // MQTT password (tx_key)
+    void setCredentials(const std::string& user, const std::string& pass);
     void start();
     void stop();
 
@@ -66,6 +69,8 @@ private:
 
     std::string uri_;
     std::string client_id_;
+    std::string username_;    // MQTT username (typically device_id)
+    std::string password_;    // MQTT password (tx_key from provisioning)
 
     bool connected_ = false;
 

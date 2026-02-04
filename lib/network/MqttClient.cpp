@@ -32,6 +32,22 @@ void MqttClient::setClientId(const std::string& id)
     client_id_ = id;
 }
 
+void MqttClient::setUsername(const std::string& user)
+{
+    username_ = user;
+}
+
+void MqttClient::setPassword(const std::string& pass)
+{
+    password_ = pass;
+}
+
+void MqttClient::setCredentials(const std::string& user, const std::string& pass)
+{
+    username_ = user;
+    password_ = pass;
+}
+
 void MqttClient::start()
 {
     if (uri_.empty())
@@ -49,6 +65,12 @@ void MqttClient::start()
     esp_mqtt_client_config_t cfg = {};
     cfg.uri = uri_.c_str();
     cfg.client_id = client_id_.empty() ? nullptr : client_id_.c_str();
+    
+    // -------------------------------
+    // MQTT Authentication (MEO tx_key)
+    // -------------------------------
+    cfg.username = username_.empty() ? nullptr : username_.c_str();
+    cfg.password = password_.empty() ? nullptr : password_.c_str();
 
     // -------------------------------
     // Memory-conscious configuration
