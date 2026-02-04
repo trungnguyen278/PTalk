@@ -12,6 +12,7 @@
 #include "system/StateTypes.hpp"
 #include "system/StateManager.hpp"
 #include "BluetoothService.hpp"
+#include "meo/MeoFeature.hpp"
 
 class WifiService;     // Low-level WiFi
 class WebSocketClient; // Low-level WebSocket
@@ -45,6 +46,10 @@ public:
         std::string ws_url; // e.g. ws://192.168.1.100:8080/ws
         // MQTT broker endpoint
         std::string mqtt_url; // e.g. mqtt://broker.hivemq.com:
+        
+        // MEO SDK credentials (from BLE provisioning)
+        std::string user_id;   // MEO user ID (namespace for multi-tenant)
+        std::string tx_key;    // MEO transmit key (MQTT password)
     };
 
     // ======================================================
@@ -174,6 +179,24 @@ public:
     /// Get current device status for status query response
     std::string getCurrentStatusJson() const;
 
+    // ======================================================
+    // MEO Feature Layer API
+    // ======================================================
+    /// Register a feature handler
+    void registerFeature(const std::string& name, meo::FeatureHandler handler);
+    
+    /// Unregister a feature handler
+    void unregisterFeature(const std::string& name);
+    
+    /// Publish an event to server
+    bool publishEvent(const std::string& event_name, const meo::FeatureParams& data = {});
+    
+    /// Publish feature response
+    bool publishFeatureResponse(const meo::FeatureResponse& response);
+    
+    /// Get MEO feature manager for advanced usage
+    meo::MeoFeatureManager& getFeatureManager() { return feature_manager_; }
+
 private:
     // ======================================================
     // Internal handlers
@@ -197,6 +220,10 @@ private:
 
     // Process configuration command from WebSocket message
     void handleConfigCommand(const std::string &json_msg);
+
+    // MEO Feature Layer handlers
+    void handleMeoFeatureInvoke(const std::string& payload, const std::string& feature_from_topic);
+    void registerBuiltinFeatures();
 
     // Handle inbound WS binary payloads (firmware or app data).
     void handleWsBinaryMessage(const uint8_t *data, size_t len);
@@ -261,6 +288,17 @@ private:
                                           // Mqtt client for telemetry
     std::unique_ptr<MqttClient> mqtt;
     std::string mqtt_base_topic; // Ví dụ: "ptalk/DEVICE_ID"
+    
+    // MEO SDK topic patterns
+    std::string meo_user_id_;              // User ID from provisioning
+    std::string meo_device_id_;            // Device ID (MAC-based)
+    std::string meo_invoke_topic_;         // meo/{userId}/{deviceId}/feature
+    std::string meo_legacy_invoke_prefix_; // meo/{deviceId}/feature/
+    std::string meo_event_topic_;          // meo/{userId}/{deviceId}/event
+    bool meo_cloud_compatible_ = true;     // Use cloud-compatible topic pattern
+    
+    // MEO Feature Manager
+    meo::MeoFeatureManager feature_manager_;
     //
     StreamBufferHandle_t mic_encoded_sb = nullptr;
     TaskHandle_t uplink_task_handle = nullptr;

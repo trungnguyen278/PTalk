@@ -2,6 +2,7 @@
 #include "WifiService.hpp"
 #include "WebSocketClient.hpp"
 #include "MqttClient.hpp"
+#include "meo/MeoFeature.hpp"
 #include "system/AudioManager.hpp"
 #include "system/DisplayManager.hpp"
 #include "system/PowerManager.hpp"
@@ -91,10 +92,26 @@ bool NetworkManager::init()
     mqtt = std::make_unique<MqttClient>();
     mqtt->init();
 
-    // Tạo topic dựa trên MAC ID
-    mqtt_base_topic = "devices/" + getDeviceEfuseID();
+    // Setup MEO SDK topic patterns
+    meo_device_id_ = getDeviceEfuseID();
+    meo_user_id_ = config_.user_id.empty() ? "default" : config_.user_id;
+    
+    // Default tx_key for demo/development (server should allow this or require provisioning)
+    std::string effective_tx_key = config_.tx_key.empty() ? "ptalk_default_key" : config_.tx_key;
+    config_.tx_key = effective_tx_key;
+    
+    // MEO topic patterns
+    // Cloud-compatible: meo/{userId}/{deviceId}/feature
+    // Legacy: meo/{deviceId}/feature/{featureName}/invoke
+    meo_invoke_topic_ = "meo/" + meo_user_id_ + "/" + meo_device_id_ + "/feature";
+    meo_legacy_invoke_prefix_ = "meo/" + meo_device_id_ + "/feature/";
+    meo_event_topic_ = "meo/" + meo_user_id_ + "/" + meo_device_id_ + "/event";
+    
+    // Legacy topic for backward compatibility
+    mqtt_base_topic = "devices/" + meo_device_id_;
 
     setupMqtt();
+    registerBuiltinFeatures();
     ESP_LOGI(TAG, "NetworkManager init OK");
     return true;
 }
@@ -754,39 +771,86 @@ void NetworkManager::sendOtaNack(uint32_t seq)
 void NetworkManager::setupMqtt()
 {
     mqtt->setUri(config_.mqtt_url);
-    mqtt->setClientId("PTalk_" + getDeviceEfuseID());
+    mqtt->setClientId("PTalk_" + meo_device_id_);
+    
+    // MEO SDK authentication: device_id as username, tx_key as password
+    if (!config_.tx_key.empty())
+    {
+        mqtt->setCredentials(meo_device_id_, config_.tx_key);
+        ESP_LOGI(TAG, "MQTT auth enabled with tx_key");
+    }
 
     mqtt->onConnected([this]()
                       {
-        ESP_LOGI(TAG, "MQTT Connected - subscribing to topics");
+        ESP_LOGI(TAG, "MQTT Connected - subscribing to MEO topics");
         
-        // Subscribe to command topic
+        // ============================================================
+        // MEO SDK Topic Subscriptions
+        // ============================================================
+        
+        // 1. Cloud-compatible feature invoke: meo/{userId}/{deviceId}/feature
+        mqtt->subscribe(meo_invoke_topic_, 1);
+        ESP_LOGI(TAG, "Subscribed to MEO invoke: %s", meo_invoke_topic_.c_str());
+        
+        // 2. Legacy feature invoke: meo/{deviceId}/feature/+/invoke (wildcard)
+        std::string legacy_wildcard = meo_legacy_invoke_prefix_ + "+/invoke";
+        mqtt->subscribe(legacy_wildcard, 1);
+        ESP_LOGI(TAG, "Subscribed to MEO legacy: %s", legacy_wildcard.c_str());
+        
+        // ============================================================
+        // Legacy PTalk Topics (backward compatibility)
+        // ============================================================
         mqtt->subscribe(mqtt_base_topic + "/cmd", 1);
-        
-        // Subscribe to OTA data topic (binary chunks)
         mqtt->subscribe(mqtt_base_topic + "/ota_data", 1);
-        
-        // Subscribe to OTA ACK topic (optional - for server confirmation)
         mqtt->subscribe(mqtt_base_topic + "/ota_ack", 0);
         
         // Send device handshake on connect
-        sendDeviceHandshake(); });
+        sendDeviceHandshake();
+        
+        // Publish initial status event
+        publishEvent(meo::events::STATUS, {
+            {"connectivity", "online"},
+            {"firmware_version", app_meta::APP_VERSION}
+        }); });
 
     mqtt->onMessage([this](const std::string &topic, const std::string &payload)
                     {
                         ESP_LOGD(TAG, "MQTT message: %s (%zu bytes)", topic.c_str(), payload.size());
 
+                        // ============================================================
+                        // MEO SDK Feature Invoke Handling
+                        // ============================================================
+                        
+                        // Cloud-compatible invoke: meo/{userId}/{deviceId}/feature
+                        if (topic == meo_invoke_topic_)
+                        {
+                            handleMeoFeatureInvoke(payload, "");
+                            return;
+                        }
+                        
+                        // Legacy invoke: meo/{deviceId}/feature/{featureName}/invoke
+                        if (topic.find(meo_legacy_invoke_prefix_) == 0 && 
+                            topic.find("/invoke") != std::string::npos)
+                        {
+                            // Extract feature name from topic
+                            size_t start = meo_legacy_invoke_prefix_.length();
+                            size_t end = topic.find("/invoke");
+                            std::string feature_name = topic.substr(start, end - start);
+                            handleMeoFeatureInvoke(payload, feature_name);
+                            return;
+                        }
+                        
+                        // ============================================================
+                        // Legacy PTalk Topics
+                        // ============================================================
                         if (topic == mqtt_base_topic + "/cmd")
                         {
-                            // JSON config commands
                             handleConfigCommand(payload);
                         }
                         else if (topic == mqtt_base_topic + "/ota_data")
                         {
-                            // Binary OTA chunks
                             handleOtaBinaryChunk((const uint8_t *)payload.data(), payload.size());
                         }
-                        // Ignore ota_ack topic (server's ACK to our ACKs - optional)
                     });
 
     mqtt->onDisconnected([this]()
@@ -1554,4 +1618,268 @@ std::string NetworkManager::getCurrentStatusJson() const
     cJSON_Delete(root);
 
     return result;
+}
+
+// ============================================================================
+// MEO FEATURE LAYER IMPLEMENTATION
+// ============================================================================
+
+void NetworkManager::registerFeature(const std::string& name, meo::FeatureHandler handler)
+{
+    feature_manager_.registerFeature(name, handler);
+}
+
+void NetworkManager::unregisterFeature(const std::string& name)
+{
+    feature_manager_.unregisterFeature(name);
+}
+
+bool NetworkManager::publishEvent(const std::string& event_name, const meo::FeatureParams& data)
+{
+    if (!mqtt || !mqtt->isConnected())
+    {
+        ESP_LOGW(TAG, "MQTT not connected, cannot publish event: %s", event_name.c_str());
+        return false;
+    }
+
+    meo::DeviceEvent event;
+    event.event_name = event_name;
+    event.device_id = meo_device_id_;
+    event.data = data;
+
+    std::string json = meo::MeoFeatureManager::serializeEvent(event);
+    std::string topic = meo_event_topic_ + "/" + event_name;
+
+    ESP_LOGI(TAG, "Publishing MEO event: %s → %s", event_name.c_str(), topic.c_str());
+    return mqtt->publish(topic, json, 1, false);
+}
+
+bool NetworkManager::publishFeatureResponse(const meo::FeatureResponse& response)
+{
+    if (!mqtt || !mqtt->isConnected())
+    {
+        ESP_LOGW(TAG, "MQTT not connected, cannot publish feature response");
+        return false;
+    }
+
+    std::string json = meo::MeoFeatureManager::serializeResponse(response);
+    std::string topic = meo_event_topic_ + "/" + meo::events::FEATURE_RESPONSE;
+
+    ESP_LOGI(TAG, "Publishing feature response: %s → %s", 
+             response.feature_name.c_str(), topic.c_str());
+    return mqtt->publish(topic, json, 1, false);
+}
+
+void NetworkManager::handleMeoFeatureInvoke(const std::string& payload, const std::string& feature_from_topic)
+{
+    ESP_LOGI(TAG, "Handling MEO feature invoke (topic_feature=%s)", feature_from_topic.c_str());
+
+    // Parse the invoke payload
+    meo::FeatureCall call = meo::MeoFeatureManager::parseInvokePayload(payload, feature_from_topic);
+    call.device_id = meo_device_id_;
+
+    if (call.feature_name.empty())
+    {
+        ESP_LOGW(TAG, "Feature invoke missing feature name");
+        meo::FeatureResponse error_resp{
+            "unknown",
+            meo_device_id_,
+            false,
+            "Missing feature name in invoke",
+            call.invoke_id,
+            {}
+        };
+        publishFeatureResponse(error_resp);
+        return;
+    }
+
+    // Invoke the feature handler
+    meo::FeatureResponse response = feature_manager_.invokeFeature(call);
+
+    // Publish the response
+    publishFeatureResponse(response);
+}
+
+void NetworkManager::registerBuiltinFeatures()
+{
+    ESP_LOGI(TAG, "Registering built-in MEO features");
+
+    // ============================================================
+    // Device Configuration Features
+    // ============================================================
+
+    registerFeature(meo::features::SET_VOLUME, [this](const meo::FeatureCall& call) {
+        uint8_t volume = 60;
+        auto it = call.params.find("volume");
+        if (it != call.params.end())
+        {
+            volume = static_cast<uint8_t>(std::stoi(it->second));
+        }
+        
+        bool success = applyVolumeConfig(volume);
+        
+        return meo::FeatureResponse{
+            call.feature_name,
+            call.device_id,
+            success,
+            success ? "Volume set to " + std::to_string(volume) : "Failed to set volume",
+            call.invoke_id,
+            {{"volume", std::to_string(volume)}}
+        };
+    });
+
+    registerFeature(meo::features::SET_BRIGHTNESS, [this](const meo::FeatureCall& call) {
+        uint8_t brightness = 100;
+        auto it = call.params.find("brightness");
+        if (it != call.params.end())
+        {
+            brightness = static_cast<uint8_t>(std::stoi(it->second));
+        }
+        
+        bool success = applyBrightnessConfig(brightness);
+        
+        return meo::FeatureResponse{
+            call.feature_name,
+            call.device_id,
+            success,
+            success ? "Brightness set to " + std::to_string(brightness) : "Failed to set brightness",
+            call.invoke_id,
+            {{"brightness", std::to_string(brightness)}}
+        };
+    });
+
+    registerFeature(meo::features::SET_DEVICE_NAME, [this](const meo::FeatureCall& call) {
+        std::string name = "PTalk";
+        auto it = call.params.find("device_name");
+        if (it != call.params.end())
+        {
+            name = it->second;
+        }
+        
+        bool success = applyDeviceNameConfig(name);
+        
+        return meo::FeatureResponse{
+            call.feature_name,
+            call.device_id,
+            success,
+            success ? "Device name set to " + name : "Failed to set device name",
+            call.invoke_id,
+            {{"device_name", name}}
+        };
+    });
+
+    // ============================================================
+    // Device Control Features
+    // ============================================================
+
+    registerFeature(meo::features::REQUEST_STATUS, [this](const meo::FeatureCall& call) {
+        std::string status = getCurrentStatusJson();
+        
+        // Parse status JSON and add to response data
+        meo::FeatureParams data;
+        cJSON* root = cJSON_Parse(status.c_str());
+        if (root)
+        {
+            cJSON* item = nullptr;
+            cJSON_ArrayForEach(item, root)
+            {
+                if (item->string)
+                {
+                    if (cJSON_IsString(item))
+                        data[item->string] = item->valuestring;
+                    else if (cJSON_IsNumber(item))
+                    {
+                        char buf[32];
+                        snprintf(buf, sizeof(buf), "%d", item->valueint);
+                        data[item->string] = buf;
+                    }
+                }
+            }
+            cJSON_Delete(root);
+        }
+        
+        return meo::FeatureResponse{
+            call.feature_name,
+            call.device_id,
+            true,
+            "Status retrieved",
+            call.invoke_id,
+            data
+        };
+    });
+
+    registerFeature(meo::features::REBOOT, [this](const meo::FeatureCall& call) {
+        ESP_LOGI(TAG, "Reboot requested via MEO feature");
+        
+        // Schedule reboot after response is sent
+        xTaskCreate([](void*) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+            esp_restart();
+        }, "reboot", 2048, nullptr, 1, nullptr);
+        
+        return meo::FeatureResponse{
+            call.feature_name,
+            call.device_id,
+            true,
+            "Rebooting...",
+            call.invoke_id,
+            {}
+        };
+    });
+
+    registerFeature(meo::features::REQUEST_BLE_CONFIG, [this](const meo::FeatureCall& call) {
+        ESP_LOGI(TAG, "BLE config mode requested via MEO feature");
+        
+        // Trigger BLE config mode (deferred)
+        openBLEConfigMode();
+        
+        return meo::FeatureResponse{
+            call.feature_name,
+            call.device_id,
+            true,
+            "Opening BLE config mode...",
+            call.invoke_id,
+            {}
+        };
+    });
+
+    registerFeature(meo::features::SET_WIFI, [this](const meo::FeatureCall& call) {
+        // WiFi config not supported over MQTT for security
+        return meo::FeatureResponse{
+            call.feature_name,
+            call.device_id,
+            false,
+            "WiFi config not supported over MQTT. Use BLE provisioning.",
+            call.invoke_id,
+            {}
+        };
+    });
+
+    // ============================================================
+    // PTalk-Specific Features
+    // ============================================================
+
+    registerFeature(meo::features::SET_EMOTION, [this](const meo::FeatureCall& call) {
+        std::string emotion_code = "00";
+        auto it = call.params.find("code");
+        if (it != call.params.end())
+        {
+            emotion_code = it->second;
+        }
+        
+        auto emotion = parseEmotionCode(emotion_code);
+        StateManager::instance().setEmotionState(emotion);
+        
+        return meo::FeatureResponse{
+            call.feature_name,
+            call.device_id,
+            true,
+            "Emotion set",
+            call.invoke_id,
+            {{"emotion_code", emotion_code}}
+        };
+    });
+
+    ESP_LOGI(TAG, "Registered %d built-in features", 
+             (int)feature_manager_.getRegisteredFeatures().size());
 }

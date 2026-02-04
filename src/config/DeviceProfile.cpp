@@ -205,6 +205,10 @@ namespace user_cfg
         std::string wifi_pass;
         std::string ws_url; // Stored WS URL (may be full URL or host:port)
         std::string mqtt_url; // Stored MQTT URL (may be full URL or host:port)
+        
+        // MEO SDK credentials
+        std::string user_id;  // MEO user namespace
+        std::string tx_key;   // MQTT password
     };
 
     static std::string get_string(nvs_handle_t h, const char *key)
@@ -251,6 +255,11 @@ namespace user_cfg
         cfg.ws_url = get_string(h, "ws_url");
         // Optional MQTT URL override
         cfg.mqtt_url = get_string(h, "mqtt_url");
+        
+        // MEO SDK credentials
+        cfg.user_id = get_string(h, "user_id");
+        cfg.tx_key = get_string(h, "tx_key");
+        
         cfg.volume = get_u8(h, "volume", cfg.volume);
         cfg.brightness = get_u8(h, "brightness", cfg.brightness);
 
@@ -260,6 +269,9 @@ namespace user_cfg
 
     static void save_all_settings(const BluetoothService::ConfigData &data)
     {
+        ESP_LOGI("user_cfg", "save_all_settings called: ssid='%s', mqtt_url='%s', user_id='%s'",
+                 data.ssid.c_str(), data.mqtt_url.c_str(), data.user_id.c_str());
+        
         nvs_handle_t h;
         if (nvs_open("storage", NVS_READWRITE, &h) == ESP_OK)
         {
@@ -271,14 +283,33 @@ namespace user_cfg
                 nvs_set_str(h, "pass", data.pass.c_str());
             if (!data.ws_url.empty())
                 nvs_set_str(h, "ws_url", data.ws_url.c_str());
-            if (!data.mqtt_url.empty())
+            if (!data.mqtt_url.empty()) {
                 nvs_set_str(h, "mqtt_url", data.mqtt_url.c_str());
+                ESP_LOGI("user_cfg", "Saved mqtt_url='%s' to NVS", data.mqtt_url.c_str());
+            } else {
+                ESP_LOGW("user_cfg", "mqtt_url is empty, not saving");
+            }
+            
+            // MEO SDK credentials
+            if (!data.user_id.empty()) {
+                nvs_set_str(h, "user_id", data.user_id.c_str());
+                ESP_LOGI("user_cfg", "Saved user_id='%s' to NVS", data.user_id.c_str());
+            }
+            if (!data.tx_key.empty()) {
+                nvs_set_str(h, "tx_key", data.tx_key.c_str());  // Actually save the key!
+                ESP_LOGI("user_cfg", "Saved tx_key to NVS (len=%d)", (int)data.tx_key.length());
+            }
+            
             nvs_set_u8(h, "volume", data.volume);
             nvs_set_u8(h, "brightness", data.brightness);
 
             nvs_commit(h);
             nvs_close(h);
             ESP_LOGI("user_cfg", "All settings saved to NVS via BLE");
+        }
+        else
+        {
+            ESP_LOGE("user_cfg", "Failed to open NVS for saving!");
         }
     }
 }
@@ -489,6 +520,10 @@ bool DeviceProfile::setup(AppController &app)
     const std::string default_mqtt = "171.226.10.121:1883";
     std::string chosen_mqtt = user.mqtt_url.empty() ? default_mqtt : user.mqtt_url;
     net_cfg.mqtt_url = normalize_mqtt_url(chosen_mqtt);
+    
+    // MEO SDK credentials (loaded from NVS, set via BLE)
+    net_cfg.user_id = user.user_id;
+    net_cfg.tx_key = user.tx_key;
 
     if (!network_mgr->init(net_cfg))
     {
