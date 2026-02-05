@@ -7,8 +7,9 @@ Firmware modular, hướng sự kiện cho thiết bị trợ lý giọng nói d
 - **Voice Input/Output**: Ghi âm I2S (mic INMP441) và phát âm thanh (loa MAX98357)
 - **Audio Codecs**: Hỗ trợ nén ADPCM và Opus
 - **Display Management**: Driver màn hình ST7789 với hệ thống animation, render trực tiếp qua AnimationPlayer (không dùng framebuffer)
-- **Network Connectivity**: Tích hợp WiFi và WebSocket client
-- **Emotion System**: Hệ thống cảm xúc điều khiển từ server (WebSocket → `NetworkManager::parseEmotionCode()` → `StateManager` → Display)
+- **Network Connectivity**: Tích hợp WiFi, WebSocket và MQTT client
+- **MEO SDK Integration**: Tích hợp MEO feature invoke/event model cho IoT communication
+- **Emotion System**: Hệ thống cảm xúc điều khiển từ server (WebSocket/MQTT → `NetworkManager::parseEmotionCode()` → `StateManager` → Display)
 - **Power Management**: Giám sát pin qua ADC, phát hiện sạc TP4056
 - **State Management**: Event hub trung tâm với pattern publish-subscribe thread-safe
 - **Multi-threaded**: Kiến trúc đa luồng FreeRTOS
@@ -106,19 +107,22 @@ PTalk/
 │   ├── network/
 │   │   ├── WifiService.cpp/hpp       # WiFi connectivity
 │   │   ├── WebSocketClient.cpp/hpp   # WebSocket client
+│   │   ├── MqttClient.cpp/hpp        # MQTT client (MEO SDK compatible)
 │   │   └── web_page.hpp              # Web UI assets (captive portal)
+│   ├── meo/
+│   │   └── MeoFeature.cpp/hpp        # MEO SDK feature invoke/event layer
 │   ├── power/
 │   │   └── Power.cpp/hpp             # Power driver (ADC, GPIO)
 │   └── touch/
 │       └── TouchInput.cpp/hpp        # Touch/button input wrapper
 ├── include/
 │   └── system/
-│       └── WSConfig.hpp              # WebSocket config protocol
+│       └── MQTTConfig.hpp            # MQTT configuration
 ├── docs/
-│   ├── ARCHITECTURE.md               # Kiến trúc chi tiết (đồng bộ với code)
-│   ├── EMOTION_SYSTEM.md             # Tài liệu hệ thống cảm xúc
-│   ├── WEBSOCKET_CONFIG_*.md         # Tài liệu cấu hình WebSocket
-│   └── Software_Architecture.md      # Kiến trúc phần mềm tổng quan
+│   ├── MQTT_SPEC.md                  # Đặc tả giao thức MQTT
+│   ├── MQTT_SERVER_DEV.md            # Hướng dẫn phát triển MQTT server
+│   ├── BLE_APP_DEV.md                # Phát triển ứng dụng BLE provisioning
+│   └── key_concepts.md               # Các khái niệm chính MEO SDK
 ├── scripts/
 │   ├── convert_assets.py             # Convert images/GIFs thành C++ arrays
 │   ├── convert_gif.py                # Convert GIF thành RLE animation
@@ -255,13 +259,22 @@ Cấu hình trong `DeviceProfile.cpp`:
 ### Network System
 - **WiFi**: ESP32 native 802.11b/g/n (2.4GHz)
 - **WebSocket**: Persistent connection cho bidirectional communication
+- **MQTT**: MEO SDK compatible client cho IoT messaging
+- **MEO SDK**: Feature invoke/event model (xem `docs/MQTT_SPEC.md`)
+- **BLE Provisioning**: Cấu hình WiFi + credentials qua Bluetooth
 - **Captive Portal**: AP mode để provisioning WiFi
 - **Retry Logic**: Tự động reconnect với backoff strategy
-- **OTA Streaming**: Nhận firmware chunks qua WebSocket
+- **OTA Streaming**: Nhận firmware chunks qua WebSocket/MQTT
+
+### MEO SDK Integration
+- **Feature Invoke**: Server → Device (topic: `meo/{userId}/{deviceId}/feature`)
+- **Feature Event**: Device → Server (topic: `meo/{userId}/{deviceId}/event/{eventName}`)
+- **Feature Response**: Topic: `meo/{userId}/{deviceId}/event/feature_response`
+- **BLE Provisioning**: Cấu hình deviceId, tx_key, userId qua BLE characteristics
 
 ### Emotion System
-- **Flow**: Server gửi emotion code (2 chars) qua WebSocket → `NetworkManager::parseEmotionCode()` → `StateManager::setEmotionState()` → `DisplayManager` tự động play animation
-- **Mapping**: Xem `docs/EMOTION_SYSTEM.md` để biết chi tiết codes
+- **Flow**: Server gửi emotion code (2 chars) qua WebSocket/MQTT → `NetworkManager::parseEmotionCode()` → `StateManager::setEmotionState()` → `DisplayManager` tự động play animation
+- **Mapping**: Xem `docs/MQTT_SPEC.md` để biết chi tiết codes
 - **Thread-safe**: Callback được gọi ngoài lock để tránh deadlock
 
 ### Power System
@@ -280,10 +293,10 @@ Cấu hình trong `DeviceProfile.cpp`:
 | AudioSpkTask | 5 | 4KB | 1 | Speaker playback |
 | AudioMicTask | 5 | 4KB | 0 | Microphone capture |
 | AudioCodecTask | 4 | 8KB | 0 | Codec encode/decode |
-| NetworkLoop | 3 | 8KB | NO_AFFINITY | WiFi + WebSocket |
+| NetworkLoop | 3 | 8KB | NO_AFFINITY | WiFi + WebSocket + MQTT |
 
 ### Core Assignment
-- **Core 0**: WiFi driver, AudioMicTask, AudioCodecTask
+- **Core 0**: WiFi driver, MQTT, AudioMicTask, AudioCodecTask
 - **Core 1**: AppControllerTask, DisplayLoop, AudioSpkTask
 
 ## 🔌 Event Flow
@@ -326,7 +339,7 @@ Propagate to subscribers
 2. **Tạo AppControllerTask** (core 1, priority 4) - Đảm bảo queue ready
 3. `PowerManager::start()` - Sample pin sớm
 4. `DisplayManager::startLoop()` - Hiển thị boot UI
-5. `NetworkManager::start()` - Kết nối WiFi/WebSocket
+5. `NetworkManager::start()` - Kết nối WiFi/WebSocket/MQTT
 6. `AudioManager::start()` - Khởi động audio pipeline
 7. `TouchInput::start()` - Kích hoạt input
 
@@ -345,8 +358,10 @@ Reverse order để tránh dangling references:
 - ✅ **Emotion parsing**: NetworkManager → StateManager → DisplayManager
 - ✅ **State management**: Thread-safe publish-subscribe
 - ✅ **Power management**: ADC monitoring, TP4056 detection
-- ✅ **OTA Update**: OTAUpdater implemented, cần test integration
-- ✅ **WebSocket config**: Dynamic configuration protocol (xem docs/)
+- ✅ **OTA Update**: OTAUpdater implemented
+- ✅ **MQTT Client**: MEO SDK compatible MQTT transport
+- ✅ **MEO Feature Layer**: Feature invoke/event model
+- ✅ **BLE Provisioning**: WiFi + credentials provisioning qua BLE
 - ⚠️ **NVS config**: Read/write helpers, cần UI để modify
 - ⚠️ **Touch input**: Basic support, cần polish UX
 - ⚠️ **Sleep/wake**: Logic implemented, cần test edge cases
@@ -375,13 +390,19 @@ python scripts/convert_assets.py emotion happy.gif src/assets/emotions/ 20 true
 
 - ✅ **Fixed**: Undefined TouchInput reference causing compilation errors
 - ✅ **Fixed**: DisplayManager animation race conditions
-- ⚠️ **Known**: Thỉnh thoảng WebSocket reconnect sau deep sleep cần thêm delay
+- ✅ **Fixed**: MQTT reconnect after deep sleep
+- ⚠️ **Known**: BLE provisioning cần test với các thiết bị Android khác nhau
 
 ## 📖 Tài Liệu Thêm
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) - Kiến trúc chi tiết đồng bộ với code
-- [`docs/EMOTION_SYSTEM.md`](docs/EMOTION_SYSTEM.md) - Hệ thống cảm xúc và emotion codes
-- [`docs/WEBSOCKET_CONFIG_*.md`](docs/) - Tài liệu cấu hình WebSocket
+- [`docs/MQTT_SPEC.md`](docs/MQTT_SPEC.md) - Đặc tả giao thức MQTT (MEO SDK compatible)
+- [`docs/MQTT_SERVER_DEV.md`](docs/MQTT_SERVER_DEV.md) - Hướng dẫn phát triển MQTT server
+- [`docs/BLE_APP_DEV.md`](docs/BLE_APP_DEV.md) - Phát triển ứng dụng BLE provisioning
+- [`docs/key_concepts.md`](docs/key_concepts.md) - Các khái niệm chính của MEO SDK
+
+## � Repository
+
+**GitHub**: [https://github.com/trungnguyen278/PTalk](https://github.com/trungnguyen278/PTalk)
 
 ## 📄 License
 
@@ -393,8 +414,9 @@ python scripts/convert_assets.py emotion happy.gif src/assets/emotions/ 20 true
 
 ---
 
-**Phiên Bản**: v1.0.4  
+**Phiên Bản**: v1.0.6  
 **Device Model**: PTalk-V1  
 **Trạng Thái**: Development (đang phát triển)  
-**Cập Nhật Cuối**: Tháng 1/2026
+**Cập Nhật Cuối**: Tháng 2/2026  
+**GitHub**: [trungnguyen278/PTalk](https://github.com/trungnguyen278/PTalk)
 ```
